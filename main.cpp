@@ -102,8 +102,8 @@ int main()
 		);
 
 	
-	cv::Mat Q = cv::Mat::eye(6, 6, CV_64F) * 0.01;
-	cv::Mat R = cv::Mat::eye(3, 3, CV_64F) * 100.0;
+	cv::Mat Q = cv::Mat::eye(6, 6, CV_64F) * 0.1;
+	cv::Mat R = cv::Mat::eye(3, 3, CV_64F) * 10.0;
 	cv::Mat P = cv::Mat::eye(6, 6, CV_64F) * 1.0;
 	/**
  * Create a Kalman filter with the specified matrices.
@@ -233,7 +233,7 @@ int main()
 	//~~~~~~~~~~~~~~~~~~~~~~~~~~~Для отображения надписей на кадре~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	int fontFace = FONT_HERSHEY_SIMPLEX;
 
-	double fontScale = 0.5*min(a,b)/1080;
+	double fontScale = 1.0*min(a,b)/1080;
 	if (writeVideo == true)
 		fontScale = fontScale*2;
 
@@ -475,7 +475,7 @@ int main()
 		if (stabPossible) {
 			download(gStatus, status);
 			getBiasAndRotation(p0, p1, d, meanP0, transforms, T, compression); //уже можно делать Винеровскую фильтрацию
-			iirAdaptive(transforms, tauStab, roi, a, b, c, kSwitch, movementKalman);
+			iirAdaptive(transforms, tauStab, roi, a, b, c, kSwitch, movement, movementKalman);
 
 			//// Simulate measurements and update
 
@@ -587,7 +587,7 @@ int main()
 					for (uint i = 0; i < p0.size(); i++)
 						circle(writerFrame, cv::Point2f(p1[i].x*compression + a, p1[i].y*compression), 4, colors[i], -1);
 								
-				showServiceInfo(writerFrame, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movementKalman, tauStab, kSwitch, framePart, gP0.cols, maxCorners,
+				showServiceInfo(writerFrame, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movement, movementKalman,tauStab, kSwitch, framePart, gP0.cols, maxCorners,
 					seconds, secondsGPUPing, secondsFullPing, a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab, 
 					fontFace, fontScale, colorGREEN);
 
@@ -603,7 +603,7 @@ int main()
 				
 				showServiceInfoSmall(writerFrameToShow, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movementKalman, tauStab, kSwitch, framePart, gP0.cols, maxCorners,
 					seconds, secondsGPUPing, secondsFullPing, a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab,
-					fontFace, fontScale, colorGREEN);
+					fontFace, fontScale, colorRED);
 
 				cv::imshow("Writed", writerFrameToShow);
 			}
@@ -643,7 +643,7 @@ int main()
 
 				frameOut.copyTo(writerFrame(cv::Rect(0, 0, a, b)));
 				frameOut.copyTo(writerFrame(cv::Rect(0, b, a, b)));
-				showServiceInfo(writerFrame, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movementKalman, tauStab, kSwitch, framePart, gP0.cols, maxCorners,
+				showServiceInfo(writerFrame, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movement, movementKalman, tauStab, kSwitch, framePart, gP0.cols, maxCorners,
 					seconds, secondsGPUPing, secondsFullPing, a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab,
 					fontFace, fontScale, colorRED);
 				

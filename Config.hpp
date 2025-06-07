@@ -23,9 +23,10 @@ string videoSource = "./SourceVideos/ForestShakedVideo2.avi"; // pad6-100, pixel
 //string videoSource = "./SourceVideos/MoveLeftRoad.mp4"; // pad6-100, pixel4-101, pixel-102
 //string videoSource = "./SourceVideos/MoveLeftRoadShakedVideo.avi"; // pad6-100, pixel4-101, pixel-102
 //string videoSource = "./SourceVideos/Forestfhd.mp4"; // pad6-100, pixel4-101, pixel-102
+
 //int videoSource = 0;
 
-bool writeVideo = false;
+bool writeVideo = true;
 bool stabPossible = false;
 
 const int compression = 1; // //4k 1->26ms 2->20ms 3->20ms

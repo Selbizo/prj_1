@@ -250,21 +250,25 @@ void removeFramePoints(vector<Point2f>& p0, double minDistance)
 	}
 }
 
-void iirAdaptive(vector<TransformParam>& transforms, double& tau_stab, Rect& roi, const int a, const int b, const double c, double& kSwitch, vector<TransformParam>& movement)//, cv::KalmanFilter& KF)
+void iirAdaptive(vector<TransformParam>& transforms, double& tau_stab, Rect& roi, const int a, const int b, const double c, double& kSwitch, vector<TransformParam>& movement, vector<TransformParam>& movementKalman)//, cv::KalmanFilter& KF)
 {
 	//if ((abs(transforms[0].dx) - 10.0 < 1.2 * transforms[3].dx) && (abs(transforms[0].dy) - 10.0 < 1.2 * transforms[3].dy) && (abs(transforms[0].da) - 0.02 < 1.2 * transforms[3].da))
 	if ((abs(transforms[0].dx) - 10.0 < 4.0 * transforms[3].dx) && (abs(transforms[0].dy) - 10.0 < 4.0 * transforms[3].dy) && (abs(transforms[0].da) - 0.02 < 4.0 * transforms[3].da))
 	{
-		transforms[1].dx = kSwitch * (transforms[1].dx * (tau_stab - 1.0) / tau_stab + kSwitch * transforms[0].dx) - movement[3].dx;
-		transforms[1].dy = kSwitch * (transforms[1].dy * (tau_stab - 1.0) / tau_stab + kSwitch * transforms[0].dy) - movement[3].dy;
-		transforms[1].da = kSwitch * (transforms[1].da * (tau_stab - 1.0) / tau_stab + kSwitch * transforms[0].da) - movement[3].da;
+		transforms[1].dx = kSwitch * (transforms[1].dx * (tau_stab - 1.0) / tau_stab + kSwitch * transforms[0].dx) - movement[1].dx;
+		transforms[1].dy = kSwitch * (transforms[1].dy * (tau_stab - 1.0) / tau_stab + kSwitch * transforms[0].dy) - movement[1].dy;
+		transforms[1].da = kSwitch * (transforms[1].da * (tau_stab - 1.0) / tau_stab + kSwitch * transforms[0].da) - movement[1].da;
+	} 
+	else 
+	{
+		cout<<"iirAdaptiveExeption"<<endl;
 	}
 
-	if (transforms[1].da > 3.0)
-		transforms[1].da = 3.0;
+	if (transforms[1].da > CV_PI)
+		transforms[1].da -= CV_PI;
 
-	if (transforms[1].da < -3.0)
-		transforms[1].da = -3.0;
+	if (transforms[1].da < -CV_PI)
+		transforms[1].da +=CV_PI;
 
 	if (tau_stab < 30.0)
 		tau_stab *= 1.1;
@@ -343,17 +347,18 @@ void iirAdaptive(vector<TransformParam>& transforms, double& tau_stab, Rect& roi
 	//movement[2].dy = (movement[2].dy*63 + movement[1].dy - transforms[0].dy)/64; //acceleration second derivative
 	//movement[2].da = (movement[2].da*63 + movement[1].da - transforms[0].da)/64; //acceleration second derivative
 
-	//movement[1].dy = (movement[1].dy*127 + transforms[0].dy)/128; //velocity first derivative
-	//movement[1].da = (movement[1].da*127 + transforms[0].da)/128; //velocity first derivative
-	//movement[1].dx = (movement[1].dx*127 + transforms[0].dx)/128; //velocity first derivative 
+	movement[1].dy = (movement[1].dy*127 + transforms[0].dy)/128; //velocity first derivative
+	movement[1].da = (movement[1].da*127 + transforms[0].da)/128; //velocity first derivative
+	movement[1].dx = (movement[1].dx*127 + transforms[0].dx)/128; //velocity first derivative 
 
-	movement[3].dy = movement[3].dy*7/8 + movement[1].dy/8; //coordinate
-	movement[3].da = movement[3].da*7/8 + movement[1].da/8; //coordinate
-	movement[3].dx = movement[3].dx*7/8 + movement[1].dx/8; //coordinate
 
-	movement[0].dy = movement[1].dy + movement[0].dy*127/128; //coordinate
-	movement[0].da = movement[1].da + movement[0].da*127/128; //coordinate
-	movement[0].dx = movement[1].dx + movement[0].dx*127/128; //coordinate
+	movementKalman[3].dy = movementKalman[3].dy*0.9 + movementKalman[3].dy*0.1; //velocity first derivative after KF
+	movementKalman[3].da = movementKalman[3].da*0.9 + movementKalman[3].da*0.1; //velocity first derivative after KF
+	movementKalman[3].dx = movementKalman[3].dx*0.9 + movementKalman[3].dx*0.1; //velocity first derivative after KF 
+
+	movementKalman[0].dy = movementKalman[1].dy + movementKalman[0].dy; //coordinate
+	movementKalman[0].da = movementKalman[1].da + movementKalman[0].da; //coordinate
+	movementKalman[0].dx = movementKalman[1].dx + movementKalman[0].dx; //coordinate
 
 	transforms[2].dx = transforms[1].dx; // - movement[1].dx; //coordinate
 	transforms[2].dy = transforms[1].dy; // - movement[1].dy; //coordinate
