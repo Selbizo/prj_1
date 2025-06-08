@@ -27,7 +27,7 @@ int main()
 		
 
 	Ptr<cuda::CornersDetector > d_features_small = cv::cuda::createGoodFeaturesToTrackDetector(srcType,
-		40, qualityLevel, minDistance, blockSize, useHarrisDetector, harrisK);
+		20, qualityLevel*1.5, minDistance*1.5, blockSize, useHarrisDetector, harrisK);
 	
 
 	Ptr<cuda::SparsePyrLKOpticalFlow> d_pyrLK_sparse = cuda::SparsePyrLKOpticalFlow::create(
@@ -47,11 +47,11 @@ int main()
 	vector<uchar> status;
 	cuda::GpuMat gStatus, gErr;
 	double tauStab = 100.0;
-	double kSwitch = 0.001;
+	double kSwitch = 0.01;
 	double framePart = 0.8;
 
 	vector <TransformParam> transforms(4);
-	for (int i = 0; i < 4;i++)
+	for (int i = 0; i < transforms.size();i++)
 	{
 		transforms[i].dx = 0.0;
 		transforms[i].dy = 0.0;
@@ -80,31 +80,36 @@ int main()
 	//Фильтр Калмана
 
 		// System dimensions
-	int state_dim = 6;  // vx, vy, ax, ay
+	int state_dim = 9;  // vx, vy, ax, ay
 	int meas_dim = 3;   // vx, vy
 
 	// Create system matrices
 	double FPS = 30.0;
 	double dt = 1; //1/ FPS;
-	cv::Mat A = (cv::Mat_<double>(6, 6) <<
-		1, 0, dt, 0, 0, 0,
-		0, 1, 0, dt, 0, 0,
-		0, 0, 1,  0, 0, 0,
-		0, 0, 0,  1, 0, 0, 
-		0, 0, 0,  0, 1, dt,
-		0, 0, 0,  0, 0, 1
+	double dt2 = dt*dt/2;
+	cv::Mat A = (cv::Mat_<double>(state_dim, state_dim) <<
+		1,	0,	dt,	0,	dt2,0,	0,	0,	0,	//vx	
+		0,	1,	0,	dt,	0,	dt2,0,	0,	0,	//vy
+		0,	0,	1,	0,	dt,	0,	0,	0,	0,	//ax
+		0,	0,	0,	1,	0,	dt,	0,	0,	0,	//ay
+		0,	0,	0,	0,	1,	0,	0,	0,	0,	//a2x
+		0,	0,	0,	0,	0,	1,	0,	0,	0,	//a2y
+		0,	0,	0,	0,	0,	0,	1,	dt,	dt2,//vroll
+		0,	0,	0,	0,	0,	0,	0,	1,	dt,	//aroll
+		0,	0,	0,	0,	0,	0,	0,	0,	1	//a2roll 
+
 		);
 
-	cv::Mat C = (cv::Mat_<double>(3, 6) <<
-		1, 0, 0, 0, 0, 0,
-		0, 1, 0, 0, 0, 0, 
-		0, 0, 0, 0, 1, 0
+	cv::Mat C = (cv::Mat_<double>(meas_dim, state_dim) <<
+		1, 0, 0, 0, 0, 0, 0,0,0,
+		0, 1, 0, 0, 0, 0, 0,0,0,
+		0, 0, 0, 0, 0, 0, 1,0,0
 		);
 
 	
-	cv::Mat Q = cv::Mat::eye(6, 6, CV_64F) * 0.1;
-	cv::Mat R = cv::Mat::eye(3, 3, CV_64F) * 10.0;
-	cv::Mat P = cv::Mat::eye(6, 6, CV_64F) * 1.0;
+	cv::Mat Q = cv::Mat::eye(state_dim, state_dim, CV_64F) * 0.00001;	//low value
+	cv::Mat R = cv::Mat::eye(meas_dim, meas_dim, CV_64F) * 10000.0;		//high value
+	cv::Mat P = cv::Mat::eye(state_dim, state_dim, CV_64F) * 1.0;
 	/**
  * Create a Kalman filter with the specified matrices.
  *   A - System dynamics matrix
@@ -117,20 +122,8 @@ int main()
 	KalmanFilterCV kf(dt, A, C, Q, R, P);
 
 	// Initialize with first measurement
-	cv::Mat x0 = (cv::Mat_<double>(6, 1) << 0, 0, 0, 0, 0, 0);
+	cv::Mat x0 = (cv::Mat_<double>(state_dim, 1) << 0,0,0, 0,0,0, 0,0,0);
 	kf.init(0, x0);
-
-	//// Simulate measurements and update
-	//for (int i = 0; i < 40; i++) {
-	//	cv::Mat measurement = (cv::Mat_<double>(2, 1) << i * 1.0, i * 0.5);
-	//	std::cout << "measurement: " << measurement.t() << std::endl;
-	//	kf.update(measurement);
-
-	//	cv::Mat state = kf.state();
-	//	std::cout << "State: " << state.t() << std::endl;
-	//}
-
-
 
 
 	// переменные для фильтра Виннера
@@ -170,10 +163,10 @@ int main()
 
 	VideoCapture capture(videoSource);
 
-	 //Попытка установить 720p (1280x720)
+	//Попытка установить 720p (1280x720)
 
-	// capture.set(cv::CAP_PROP_FRAME_WIDTH, 1280);
-	// capture.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
+	// capture.set(cv::CAP_PROP_FRAME_WIDTH, 640);
+	// capture.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
 	// capture.set(cv::CAP_PROP_FPS, 30.0);
 	
 
@@ -235,7 +228,7 @@ int main()
 
 	double fontScale = 1.0*min(a,b)/1080;
 	if (writeVideo == true)
-		fontScale = fontScale*2;
+		fontScale = fontScale;
 
 	setlocale(LC_ALL, "RU");
 
@@ -366,16 +359,13 @@ int main()
 			if (p1.size() < double(maxCorners * 5 / 7) && (abs(meanP0.x - a / 2) < a / 6 || abs(meanP0.y - b / 2) < b / 6))
 			{
 				movementKalman[1].getTransformBoost(TSearchPoints, a, b, rng);
+				//movement[1].getTransformBoost(TSearchPoints, a, b, rng);
 				cuda::warpAffine(gMaskSearchSmall, gMaskSearchSmallRoi, TSearchPoints, gMaskSearchSmall.size());
-				//Mat tmp;
-				//gMaskSearchSmallRoi.download(tmp);
-				//resize(tmp, tmp, Size(1080 * a / b, 1080));
-				//imshow("mask", tmp);
 				addFramePoints(gGray, p0, d_features_small, gMaskSearchSmallRoi);
 				removeFramePoints(p0, minDistance*0.8);
 			}
 
-
+			
 			gGray.copyTo(gOldGray);
 			gP0.upload(p0);
 			if (kSwitch < 0.01)
@@ -475,54 +465,50 @@ int main()
 		if (stabPossible) {
 			download(gStatus, status);
 			getBiasAndRotation(p0, p1, d, meanP0, transforms, T, compression); //уже можно делать Винеровскую фильтрацию
-			iirAdaptive(transforms, tauStab, roi, a, b, c, kSwitch, movement, movementKalman);
+			// iirAdaptive(transforms, tauStab, roi, a, b, c, kSwitch);
+			iirAdaptiveHighPass(transforms, tauStab, roi, a, b, c, kSwitch, movement, movementKalman);
 
-			//// Simulate measurements and update
-
-			//cv::Mat measurement = (cv::Mat_<double>(2, 1) << transforms[0].dx, transforms[0].dy);
-			//cv::Mat measurement = (cv::Mat_<double>(2, 1) << movement[1].dx, movement[1].dy);
-			//std::cout << "measurement: " << measurement.t() << std::endl;
-			//std::cout << "measurement: " << measurement.at<double>(0, 0) << " " << measurement.at<double>(1, 0) << std::endl;
-
-			kf.update((cv::Mat_<double>(3, 1) << transforms[0].dx, transforms[0].dy, transforms[0].da));
+			kf.update((cv::Mat_<double>(3, 1) << transforms[1].dx, transforms[1].dy, transforms[1].da));
 
 			cv::Mat state = kf.state();
 			//std::cout << "State: " << state.t() << std::endl;
 			//std::cout << "State: " << state.at<double>(0, 0) << " " << state.at<double>(2, 0) << " " << state.at<double>(4, 0) << std::endl;
 
 			movementKalman[1].dx = state.at<double>(0, 0);
-			movementKalman[1].dy = state.at<double>(2, 0);
-			movementKalman[1].da = state.at<double>(4, 0);
+			movementKalman[1].dy = state.at<double>(1, 0);
+			movementKalman[1].da = state.at<double>(6, 0);
 
-			movementKalman[2].dx = state.at<double>(1, 0);
+			movementKalman[2].dx = state.at<double>(2, 0);
 			movementKalman[2].dy = state.at<double>(3, 0);
-			movementKalman[2].da = state.at<double>(5, 0);
+			movementKalman[2].da = state.at<double>(7, 0);
 
+			movementKalman[3].dx = state.at<double>(4, 0);
+			movementKalman[3].dy = state.at<double>(5, 0);
+			movementKalman[3].da = state.at<double>(8, 0);
 
-			transforms[1].getTransform(TStab, a, b, c, atan_ba, framePart); //[1]
-			transforms[1].getTransformInvert(TStabInv, a, b, c, atan_ba, framePart); //[1]
+			transforms[0].getTransform(TStab, a, b, c, atan_ba, framePart); //[1]
+			transforms[0].getTransformInvert(TStabInv, a, b, c, atan_ba, framePart); //[1]
 
 			if (T.rows == 2 && T.cols == 3)
 			{
 				double xDev = T.at<double>(0, 2);
 				double yDev = T.at<double>(1, 2);
 				// Запись отклонения в CSV файл
-				outputFile << frameCount << "\t" << xDev << "\t" << yDev << "\t" << transforms[1].dx <<"\t" << transforms[1].dy << "\t" 
-					<< transforms[2].dx << "\t" << transforms[2].dy << "\t" << transforms[3].dx << "\t" << transforms[3].dy << endl;
+				outputFile << frameCount << "\t" << xDev << "\t" << yDev << "\t" << transforms[0].dx <<"\t" << transforms[0].dy << "\t" 
+					<< transforms[1].dx << "\t" << transforms[1].dy << "\t" << transforms[3].dx << "\t" << transforms[3].dy << endl;
 			}
 			
 			// Винеровская фильтрация
 			if (wiener && kSwitch > 0.01)
 			{
-				//LEN = sqrt(d.x * d.x + d.y * d.y) / Q;
-				LEN = sqrt(transforms[0].dx * transforms[0].dx + transforms[0].dy * transforms[0].dy) / qWiener;
-				if (transforms[0].dx == 0.0)
-					if (transforms[0].dy > 0.0)
+				LEN = sqrt(transforms[1].dx * transforms[1].dx + transforms[1].dy * transforms[1].dy) / qWiener;
+				if (transforms[1].dx == 0.0)
+					if (transforms[1].dy > 0.0)
 						THETA = 90.0;
 					else
 						THETA = -90.0;
 				else
-					THETA = atan(transforms[0].dy / transforms[0].dx) * 180.0 / 3.14159;
+					THETA = atan(transforms[1].dy / transforms[1].dx) * RAD_TO_DEG;
 
 				cuda::bilateralFilter(gFrame, gFrame, 5, 5.0, 5.0);
 				gFrame.convertTo(gFrame, CV_32F);
@@ -591,7 +577,7 @@ int main()
 					seconds, secondsGPUPing, secondsFullPing, a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab, 
 					fontFace, fontScale, colorGREEN);
 
-				//writer.write(writerFrame);
+				writer.write(writerFrame);
 				writerSmall.write(frameStabilizatedCropResized);
 				cv::resize(writerFrame, writerFrameToShow, cv::Size(1080*a/b, 1080), 0.0, 0.0, cv::INTER_LINEAR);
 				cv::imshow("Writed", writerFrameToShow);
@@ -612,14 +598,12 @@ int main()
 			if (kSwitch > 0.1)
 				kSwitch *= 0.8;
 
-			transforms[1].dx *= 0.8;
-			transforms[1].dy *= 0.8;
-			transforms[1].da *= 0.8;
-			transforms[1].getTransform(TStab, a, b, c, atan_ba, framePart);
+			transforms[0].dx *= 0.8;
+			transforms[0].dy *= 0.8;
+			transforms[0].da *= 0.8;
+			transforms[0].getTransform(TStab, a, b, c, atan_ba, framePart);
 			cuda::warpAffine(gFrame, gFrameStabilized, TStab, cv::Size(a, b));
 			
-
-			//gFrameStabilizatedCrop = gFrameStabilized(roi);
 			gFrameStabilizatedCrop = gFrameStabilized;
 
 			cuda::resize(gFrameStabilizatedCrop, gFrameStabilizatedCropResized, cv::Size(a, b), 0.0, 0.0, cv::INTER_NEAREST);
@@ -637,12 +621,11 @@ int main()
 				cuda::warpAffine(gCrossRef, gCross, TStab, cv::Size(a, b));
 
 				gFrameOut.download(frameOut);
-				//cv::add(frame, cross, frame);
-				
+								
 				frame.copyTo(writerFrame(cv::Rect(a, 0, a, b))); //original video
-
 				frameOut.copyTo(writerFrame(cv::Rect(0, 0, a, b)));
 				frameOut.copyTo(writerFrame(cv::Rect(0, b, a, b)));
+
 				showServiceInfo(writerFrame, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movement, movementKalman, tauStab, kSwitch, framePart, gP0.cols, maxCorners,
 					seconds, secondsGPUPing, secondsFullPing, a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab,
 					fontFace, fontScale, colorRED);
@@ -654,8 +637,8 @@ int main()
 				cv::imshow("Writed", writerFrameToShow);
 
 			}
-			else {
-				
+			else 
+			{
 				cv::cuda::resize(gFrameStabilizatedCrop, gWriterFrameToShow, cv::Size(1080*a/b, 1080), 0.0, 0.0, cv::INTER_NEAREST);
 				gWriterFrameToShow.download(writerFrameToShow);
 				
@@ -665,9 +648,7 @@ int main()
 
 				cv::imshow("Writed", writerFrameToShow);
 			}
-
 		}
-
 		// Ожидание внешних команд управления с клавиатуры
 		int keyboard = waitKey(40);
 		if (keyResponse(keyboard, frame, frameStabilizatedCropResized, crossRef, gCrossRef, a, b, nsr, wiener, threadwiener, qWiener, tauStab, framePart, roi))

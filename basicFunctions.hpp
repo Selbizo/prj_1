@@ -323,34 +323,39 @@ void showServiceInfo(Mat& writerFrame, double Q, double nsr, bool wiener, bool t
 	int fontFace, double fontScale, Scalar color)
 {
 	unsigned short temp_i = 0;
-	//cv::putText(writerFrame, format("WnrFltr Q[5][6] = %2.1f, SNR[7][8] = %2.1f", Q, 1 / nsr),
-		//textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
+	cv::putText(writerFrame, format("WnrFltr Q[5][6] = %2.1f, SNR[7][8] = %2.1f", Q, 1 / nsr),
+		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
 	cv::putText(writerFrame, format("Wnr On[1] %d, threads On[t] %d, stab On %d", wiener, threadwiener, stabPossible),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("[vX vY vRoll] %2.1f %2.1f %2.1f]", transforms[1].dx, transforms[1].dy, transforms[1].da * RAD_TO_DEG),
+	cv::putText(writerFrame, format("transforms X %+2.1f  Y %+2.1f  Roll %+2.1f", transforms[0].dx, transforms[0].dy, transforms[0].da * RAD_TO_DEG),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("[X Y Roll] %2.1f %2.1f %2.1f]", transforms[2].dx, transforms[2].dy, transforms[2].da * RAD_TO_DEG),
+	cv::putText(writerFrame, format("vX %+2.1f vY %+2.1f vRoll %+2.1f", transforms[1].dx, transforms[1].dy, transforms[1].da * RAD_TO_DEG),
+		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
+	cv::putText(writerFrame, format("aX %+2.1f aY %+2.1f aRoll %+2.1f", transforms[2].dx, transforms[2].dy, transforms[2].da * RAD_TO_DEG),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
 
-
-	++temp_i;++temp_i;
-	cv::putText(writerFrame, format("IIR X %2.1f  Y %2.1f  Roll %2.1f", movement[0].dx, movement[0].dy, movement[0].da * RAD_TO_DEG),
-		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("vX %2.1f vY %2.1f vRoll %2.1f", movement[1].dx, movement[1].dy, movement[1].da * RAD_TO_DEG),
-		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("aX %2.1f aY %2.1f aRoll %2.1f", movement[2].dx, movement[2].dy, movement[2].da * RAD_TO_DEG),
-		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
-	++temp_i;++temp_i;
-	cv::putText(writerFrame, format("KF X %2.1f  Y %2.1f  Roll %2.1f", movementKalman[0].dx, movementKalman[0].dy, movementKalman[0].da * RAD_TO_DEG),
-		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("vX %2.1f vY %2.1f vRoll %2.1f", movementKalman[1].dx, movementKalman[1].dy, movementKalman[1].da * RAD_TO_DEG),
-		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("aX %2.1f aY %2.1f aRoll %2.1f", movementKalman[2].dx, movementKalman[2].dy, movementKalman[2].da * RAD_TO_DEG),
-		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
-		
-	cv::putText(writerFrame, format("Crop[w][s] = %2.2f, %d Current corners of %d.", 1 / framePart, gP0_cols, maxCorners),
+	cv::putText(writerFrame, format("sko vX %+2.1f vY %+2.1f vRoll %+2.1f", transforms[3].dx, transforms[3].dy, transforms[3].da * RAD_TO_DEG),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("FPS = %2.1f, GPU time = %1.3f ms, Ping = %1.3f ms.", 1 / seconds, secondsPing, secondsFullPing),
+	++temp_i;
+	cv::putText(writerFrame, format("IIR X %+2.1f  Y %+2.1f  Roll %+2.1f", movement[0].dx, movement[0].dy, movement[0].da * RAD_TO_DEG),
+		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
+	cv::putText(writerFrame, format("vX %+2.1f vY %+2.1f vRoll %+2.1f", movement[1].dx, movement[1].dy, movement[1].da * RAD_TO_DEG),
+		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
+	cv::putText(writerFrame, format("aX %+2.1f aY %+2.1f aRoll %+2.1f", movement[2].dx, movement[2].dy, movement[2].da * RAD_TO_DEG),
+		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
+	++temp_i;
+	cv::putText(writerFrame, format("KF X %+2.1f  Y %+2.1f  Roll %+2.1f", movementKalman[0].dx, movementKalman[0].dy, movementKalman[0].da * RAD_TO_DEG),
+		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
+	cv::putText(writerFrame, format("vX %+2.1f vY %+2.1f vRoll %+2.1f", movementKalman[1].dx, movementKalman[1].dy, movementKalman[1].da * RAD_TO_DEG),
+		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
+	cv::putText(writerFrame, format("aX %+2.1f aY %+2.1f aRoll %+2.1f", movementKalman[2].dx, movementKalman[2].dy, movementKalman[2].da * RAD_TO_DEG),
+		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
+	cv::putText(writerFrame, format("a2X %+2.1f a2Y %+2.1f a2Roll %+2.1f", movementKalman[3].dx, movementKalman[3].dy, movementKalman[3].da * RAD_TO_DEG),
+		textOrg[temp_i], fontFace, fontScale , color, 2, 8, false); ++temp_i;
+	++temp_i;
+	cv::putText(writerFrame, format("Crop[w][s] = %+2.2f, tauStab = %2.0f , %d Current corners of %d.", 1 / framePart, tauStab, gP0_cols, maxCorners),
+		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
+	cv::putText(writerFrame, format("FPS = %+2.1f, GPU time = %1.3f ms, Ping = %1.3f ms.", 1 / seconds, secondsPing, secondsFullPing),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
 	cv::putText(writerFrame, format("Image resolution: %d x %d.", a, b),
 		textOrg[temp_i], fontFace, fontScale / 1.2, color, 2, 8, false); ++temp_i;
@@ -367,33 +372,33 @@ void showServiceInfoSmall(Mat& writerFrame, double Q, double nsr, bool wiener, b
 {
 	unsigned short temp_i = 0;
 	
-	//cv::putText(writerFrame, format("WnrFltr Q[5][6] = %2.1f, SNR[7][8] = %2.1f", Q, 1 / nsr),
+	//cv::putText(writerFrame, format("WnrFltr Q[5][6] = %+2.1f, SNR[7][8] = %+2.1f", Q, 1 / nsr),
 		//textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
 	cv::putText(writerFrame, format("Wnr [1] %d, threads [t] %d, stab %d", wiener, threadwiener, stabPossible),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("[X Y Roll] %2.1f %2.1f %2.1f]", transforms[2].dx, transforms[2].dy, transforms[2].da * RAD_TO_DEG),
+	cv::putText(writerFrame, format("[X Y Roll] %+2.1f %+2.1f %+2.1f]", transforms[2].dx, transforms[2].dy, transforms[2].da * RAD_TO_DEG),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;++temp_i;
-	cv::putText(writerFrame, format(" X %2.1f  Y %2.1f  Roll %2.1f", movement[0].dx, movement[0].dy, movement[0].da * RAD_TO_DEG),
+	cv::putText(writerFrame, format(" X %+2.1f  Y %+2.1f  Roll %+2.1f", movement[0].dx, movement[0].dy, movement[0].da * RAD_TO_DEG),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("vX %2.1f vY %2.1f vRoll %2.1f", movement[3].dx, movement[3].dy, movement[3].da * RAD_TO_DEG),
+	cv::putText(writerFrame, format("vX %+2.1f vY %+2.1f vRoll %+2.1f", movement[3].dx, movement[3].dy, movement[3].da * RAD_TO_DEG),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("aX %2.1f aY %2.1f aRoll %2.1f", movement[2].dx, movement[2].dy, movement[2].da * RAD_TO_DEG),
+	cv::putText(writerFrame, format("aX %+2.1f aY %+2.1f aRoll %+2.1f", movement[2].dx, movement[2].dy, movement[2].da * RAD_TO_DEG),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;++temp_i;
-	cv::putText(writerFrame, format("tr_0[dX dY dRoll] %2.2f %2.2f %2.2f]", transforms[0].dx, transforms[0].dy, transforms[0].da),
+	cv::putText(writerFrame, format("tr_0[dX dY dRoll] %+2.2f %+2.2f %+2.2f]", transforms[0].dx, transforms[0].dy, transforms[0].da),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("tr_1[X Y Roll] %2.2f %2.2f %2.2f]", transforms[1].dx, transforms[1].dy, transforms[1].da),
+	cv::putText(writerFrame, format("tr_1[X Y Roll] %+2.2f %+2.2f %+2.2f]", transforms[1].dx, transforms[1].dy, transforms[1].da),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("tr_2[X Y Roll] %2.2f %2.2f %2.2f]", transforms[2].dx, transforms[2].dy, transforms[2].da),
+	cv::putText(writerFrame, format("tr_2[X Y Roll] %+2.2f %+2.2f %+2.2f]", transforms[2].dx, transforms[2].dy, transforms[2].da),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("[skoX skoY skoRoll] %2.2f %2.2f %2.2f]", transforms[3].dx, transforms[3].dy, transforms[3].da),
+	cv::putText(writerFrame, format("[skoX skoY skoRoll] %+2.2f %+2.2f %+2.2f]", transforms[3].dx, transforms[3].dy, transforms[3].da),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	//cv::putText(writerFrame, format("[vX vY vRoll] %2.2f %2.2f %2.2f]", velocity[0].dx, velocity[0].dy, velocity[0].da),
+	//cv::putText(writerFrame, format("[vX vY vRoll] %+2.2f %+2.2f %+2.2f]", velocity[0].dx, velocity[0].dy, velocity[0].da),
 	//	textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
 	cv::putText(writerFrame, format("Tau[3][4]= %3.0f frames, gain = %1.2f", tauStab, kSwitch),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("Crop[w][s] = %2.2f, %d Corners of %d.", 1 / framePart, gP0_cols, maxCorners),
+	cv::putText(writerFrame, format("Crop[w][s] = %+2.2f, %d Corners of %d.", 1 / framePart, gP0_cols, maxCorners),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("FPS= %2.1f, GPU= %1.3f ms, Ping= %1.3f ms.", 1 / seconds, secondsPing, secondsFullPing),
+	cv::putText(writerFrame, format("FPS= %+2.1f, GPU= %1.3f ms, Ping= %1.3f ms.", 1 / seconds, secondsPing, secondsFullPing),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
 	cv::putText(writerFrame, format("Resolution: %d x %d.", a, b),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;

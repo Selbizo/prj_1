@@ -19,7 +19,7 @@ using namespace std;
 //string videoSource = "http://192.168.0.100:4747/video"; // pixel4
 //string videoSource = "./SourceVideos/RoadFhd.mp4"; // pad6-100, pixel4-101, pixel-102
 //string videoSource = "./SourceVideos/ForestShakedVideo.avi"; // pad6-100, pixel4-101, pixel-102
-string videoSource = "./SourceVideos/ForestShakedVideo2.avi"; // pad6-100, pixel4-101, pixel-102
+string videoSource = "./SourceVideos/RealFlight.avi"; // pad6-100, pixel4-101, pixel-102
 //string videoSource = "./SourceVideos/MoveLeftRoad.mp4"; // pad6-100, pixel4-101, pixel-102
 //string videoSource = "./SourceVideos/MoveLeftRoadShakedVideo.avi"; // pad6-100, pixel4-101, pixel-102
 //string videoSource = "./SourceVideos/Forestfhd.mp4"; // pad6-100, pixel4-101, pixel-102
@@ -45,3 +45,6 @@ bool useGray = true;
 int winSize = blockSize;
 int maxLevel = 3 + 4/compression;
 int iters = 10;
+
+
+string videoSourceForShaked = "./SourceVideos/Forestfhd.mp4"; // pad6-100, pixel4-101, pixel-102
