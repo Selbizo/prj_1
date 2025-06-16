@@ -10,10 +10,10 @@
 #include <opencv2/cudaarithm.hpp>    // GpuMat, upload, download
 
 // C++
-#include <vector>    // std::vector
-#include <iostream>  // std::cout
-#include <thread>    // std::thread
-#include <mutex>     // std::mutex
+#include <vector>    
+#include <iostream>  
+#include <thread>    
+#include <mutex>     
 
 
 using namespace cv;
@@ -376,13 +376,15 @@ void showServiceInfoSmall(Mat& writerFrame, double Q, double nsr, bool wiener, b
 		//textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
 	cv::putText(writerFrame, format("Wnr [1] %d, threads [t] %d, stab %d", wiener, threadwiener, stabPossible),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("[X Y Roll] %+2.1f %+2.1f %+2.1f]", transforms[2].dx, transforms[2].dy, transforms[2].da * RAD_TO_DEG),
+	cv::putText(writerFrame, format("[X Y Roll] %+2.1f %+2.1f %+2.1f]", transforms[0].dx, transforms[0].dy, transforms[0].da * RAD_TO_DEG),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;++temp_i;
 	cv::putText(writerFrame, format(" X %+2.1f  Y %+2.1f  Roll %+2.1f", movement[0].dx, movement[0].dy, movement[0].da * RAD_TO_DEG),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
-	cv::putText(writerFrame, format("vX %+2.1f vY %+2.1f vRoll %+2.1f", movement[3].dx, movement[3].dy, movement[3].da * RAD_TO_DEG),
+	cv::putText(writerFrame, format("vX %+2.1f vY %+2.1f vRoll %+2.1f", movement[1].dx, movement[1].dy, movement[1].da * RAD_TO_DEG),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
 	cv::putText(writerFrame, format("aX %+2.1f aY %+2.1f aRoll %+2.1f", movement[2].dx, movement[2].dy, movement[2].da * RAD_TO_DEG),
+		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
+	cv::putText(writerFrame, format("a2X %+2.1f a2Y %+2.1f a2Roll %+2.1f", movement[3].dx, movement[3].dy, movement[3].da * RAD_TO_DEG),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;++temp_i;
 	cv::putText(writerFrame, format("tr_0[dX dY dRoll] %+2.2f %+2.2f %+2.2f]", transforms[0].dx, transforms[0].dy, transforms[0].da),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
@@ -409,14 +411,6 @@ void showServiceInfoSmall(Mat& writerFrame, double Q, double nsr, bool wiener, b
 
 class KalmanFilterCV {
 public:
-	/**
-	 * Create a Kalman filter with the specified matrices.
-	 *   A - System dynamics matrix
-	 *   C - Output matrix
-	 *   Q - Process noise covariance
-	 *   R - Measurement noise covariance
-	 *   P - Estimate error covariance
-	 */
 	KalmanFilterCV(
 		double dt,
 		const cv::Mat& A,
@@ -426,36 +420,16 @@ public:
 		const cv::Mat& P
 	);
 
-	/**
-	 * Create a blank estimator.
-	 */
 	KalmanFilterCV();
 
-	/**
-	 * Initialize the filter with initial states as zero.
-	 */
 	void init();
 
-	/**
-	 * Initialize the filter with a guess for initial states.
-	 */
 	void init(double t0, const cv::Mat& x0);
 
-	/**
-	 * Update the estimated state based on measured values. The
-	 * time step is assumed to remain constant.
-	 */
 	void update(const cv::Mat& y);
 
-	/**
-	 * Update the estimated state based on measured values,
-	 * using the given time step and dynamics matrix.
-	 */
 	void update(const cv::Mat& y, double dt, const cv::Mat& A);
 
-	/**
-	 * Return the current state and time.
-	 */
 	cv::Mat state() { return x_hat; };
 	double time() { return t; };
 
@@ -542,4 +516,12 @@ void KalmanFilterCV::update(const cv::Mat& y, double dt, const cv::Mat& A) {
 	this->dt = dt;
 	A.copyTo(this->A);
 	update(y);
+}
+
+// Функция для удаления пробелов в начале и конце строки
+string trim(const string &str) {
+    size_t start = str.find_first_not_of(" \t");
+    if (start == string::npos) return "";
+    size_t end = str.find_last_not_of(" \t");
+    return str.substr(start, end - start + 1);
 }

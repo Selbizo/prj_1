@@ -121,7 +121,7 @@ void getBiasAndRotation(vector<Point2f>& p0, vector<Point2f>& p1, Point2f& d, Po
 	else
 	{
 		T = estimateAffine2D(p0, p1);
-		transforms[1] = TransformParam(-(T.at<double>(0, 2) * N + d.x * (1.0 - N)), -(T.at<double>(1, 2) * N + d.y * (1.0 - N)), -atan2(T.at<double>(1, 0), T.at<double>(0, 0)));
+		transforms[1] = TransformParam(-(T.at<double>(0, 2) * N + d.x * (1.0 - N))*compression, -(T.at<double>(1, 2) * N + d.y * (1.0 - N))*compression, -atan2(T.at<double>(1, 0), T.at<double>(0, 0)));
 	}
 }
 
@@ -359,14 +359,14 @@ void iirAdaptiveHighPass(vector<TransformParam>& transforms, double& tau_stab, R
 	if (tau_stab < 30.0)
 		tau_stab *= 1.2;
 
-	if (tau_stab < 100.0 && !(abs(transforms[0].dx) > a / 2 || abs(transforms[0].dy) > b / 2))
+	if (tau_stab < 50.0 && !(abs(transforms[0].dx) > a / 2 || abs(transforms[0].dy) > b / 2))
 		tau_stab *= 1.1;
 
-	if (tau_stab < 200.0 && !(abs(transforms[0].dx) > a / 3 || abs(transforms[0].dy) > b / 3))
+	if (tau_stab < 100.0 && !(abs(transforms[0].dx) > a / 3 || abs(transforms[0].dy) > b / 3))
 	{
 		tau_stab *= 1.1;
-		if (tau_stab > 200.0)
-			tau_stab = 200.0;
+		if (tau_stab > 100.0)
+			tau_stab = 100.0;
 	}
 
 
@@ -375,7 +375,7 @@ void iirAdaptiveHighPass(vector<TransformParam>& transforms, double& tau_stab, R
 		transforms[0].dx = double(1 - roi.x);
 		if (tau_stab > 50) {
 			tau_stab *= 0.9;
-			transforms[0].da *= 0.999;
+			//transforms[0].da *= 0.999;
 			kSwitch *= 0.95;
 		}
 	}
@@ -384,7 +384,7 @@ void iirAdaptiveHighPass(vector<TransformParam>& transforms, double& tau_stab, R
 		transforms[0].dx = (double)(a - roi.x - roi.width);
 		if (tau_stab > 50) {
 			tau_stab *= 0.9;
-			transforms[0].da *= 0.999;
+			//transforms[0].da *= 0.999;
 			kSwitch *= 0.95;
 		}
 	}
@@ -394,7 +394,7 @@ void iirAdaptiveHighPass(vector<TransformParam>& transforms, double& tau_stab, R
 		transforms[0].dy = (double)(1 - roi.y);
 		if (tau_stab > 10) {
 			tau_stab *= 0.9;
-			transforms[0].da *= 0.999;
+			//transforms[0].da *= 0.999;
 			kSwitch *= 0.95;
 		}
 	}
@@ -403,7 +403,7 @@ void iirAdaptiveHighPass(vector<TransformParam>& transforms, double& tau_stab, R
 		transforms[0].dy = (double)(b - roi.y - roi.height);
 		if (tau_stab > 50) {
 			tau_stab *= 0.9;
-			transforms[0].da *= 0.999;
+			//transforms[0].da *= 0.999;
 			kSwitch *= 0.95;
 		}
 	}
@@ -413,9 +413,9 @@ void iirAdaptiveHighPass(vector<TransformParam>& transforms, double& tau_stab, R
 
 	if (true)
 	{
-		transforms[3].dx = (1.0 - 0.1) * transforms[3].dx + 0.1 * abs(transforms[1].dx - movementKalman[1].dx);
-		transforms[3].dy = (1.0 - 0.1) * transforms[3].dy + 0.1 * abs(transforms[1].dy - movementKalman[1].dy);
-		transforms[3].da = (1.0 - 0.1) * transforms[3].da + 0.1 * abs(transforms[1].da - movementKalman[1].da);
+		transforms[3].dx = (1.0 - 0.1) * transforms[3].dx + 0.1 * abs(transforms[1].dx - movementKalman[1].dx); //абсолютная средняя ошибка
+		transforms[3].dy = (1.0 - 0.1) * transforms[3].dy + 0.1 * abs(transforms[1].dy - movementKalman[1].dy); //абсолютная средняя ошибка
+		transforms[3].da = (1.0 - 0.1) * transforms[3].da + 0.1 * abs(transforms[1].da - movementKalman[1].da); //абсолютная средняя ошибка
 	}
 
 	double moveTau = 0.8;
@@ -427,9 +427,9 @@ void iirAdaptiveHighPass(vector<TransformParam>& transforms, double& tau_stab, R
 	movement[0].da = movement[1].da + movement[0].da*0.95; //coordinate
 	movement[0].dx = movement[1].dx + movement[0].dx*0.95; //coordinate
 
-	movementKalman[0].dy = movementKalman[1].dy + movementKalman[0].dy*0.99; //coordinate
-	movementKalman[0].da = movementKalman[1].da + movementKalman[0].da*0.99; //coordinate
-	movementKalman[0].dx = movementKalman[1].dx + movementKalman[0].dx*0.99; //coordinate
+	movementKalman[0].dy = movementKalman[1].dy + movementKalman[0].dy*0.988; //coordinate
+	movementKalman[0].da = movementKalman[1].da + movementKalman[0].da*0.988; //coordinate
+	movementKalman[0].dx = movementKalman[1].dx + movementKalman[0].dx*0.988; //coordinate
 
 	transforms[2].dx = 0.0; // - movement[1].dx; //coordinate
 	transforms[2].dy = 0.0; // - movement[1].dy; //coordinate

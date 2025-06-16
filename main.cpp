@@ -4,13 +4,32 @@
 #include "basicFunctions.hpp"
 #include "stabilizationFunctions.hpp"
 #include "wienerFilter.hpp"
-
+#include <filesystem>
 
 using namespace cv;
 using namespace std;
+namespace fs = std::filesystem;
 
 int main()
 {
+	//Автоматическое создание папок
+	vector <std::string> folderPath(4); 
+	folderPath[0] = "./OutputVideos";
+	folderPath[1] = "./OutputResults";
+	folderPath[2] = "./SourceVideos";
+	folderPath[3] = "./SourceVideosAuto";
+    for (int tmp = 0; tmp < folderPath.size(); tmp++)
+	{
+
+		// Проверяем и создаём папку (если нужно)
+		if (!fs::exists(folderPath[tmp])) {
+			if (!fs::create_directory(folderPath[tmp])) {
+				std::cerr << "Failed to create directory!" << std::endl;
+				return -1;
+			}
+		}
+	}
+	
 	// Создадим массив случайных цветов для цветов характерных точек
 	vector<Scalar> colors;
 	RNG rng;
@@ -297,9 +316,10 @@ int main()
 
 	//~~~~~~~~~~~~~~~~~~~~~~~~~~~Запись заголовка в CSV файл
 
-	outputFile << "FrameNumber\tdx\tdy\tX\tY\ttr2x\ttr2y\ttr3x\ttr3y" << endl;
+	// outputFile << "FrameNumber\tdx\tdy\tX\tY\ttr2x\ttr2y\ttr3x\ttr3y" << endl;
+	// unsigned short temp_i = 0;
+	
 	int frameCount = 0;
-	unsigned short temp_i = 0;
 	//~~~~~~~~~~~~~~~~~~~~~~~~~~~СОЗДАНИЕ ЭКЗЕМПЛЯРА КЛАССА ЗАПИСИ ВИДЕО
 	VideoWriter writer, writerSmall;
 	cv::Mat writerFrame(oldFrame.rows * 2, oldFrame.cols * 2, CV_8UC3), writerFrameSmall(oldFrame.rows, oldFrame.cols, CV_8UC3);
@@ -307,11 +327,12 @@ int main()
 
 	if (writeVideo) {
 		bool isColor = (oldFrame.type() == CV_8UC3);
-		int codec = VideoWriter::fourcc('D', 'I', 'V', 'X');
+		// int codec = VideoWriter::fourcc('D', 'I', 'V', 'X');
+		int codec = VideoWriter::fourcc('a', 'v', 'c', '1');
 
 		double fps = 30.0; 
-		string filename = "./OutputVideos/TestVideo.avi"; 
-		string filenameSmall = "./OutputVideos/StabilizatedVideo.avi";
+		string filename = "./OutputVideos/TestVideo.mp4"; 
+		string filenameSmall = "./OutputVideos/StabilizatedVideo.mp4";
 
 		writer.open(filename, codec, fps, writerFrame.size(), isColor);
 		if (!writer.isOpened()) {
@@ -428,7 +449,7 @@ int main()
 				//frame.copyTo(writerFrame(cv::Rect(a, 0, a, b))); //original video
 			}
 			gFrame.upload(frame);
-			cuda::resize(gFrame, gCompressed, cv::Size(a / compression , b / compression ), 0.0, 0.0, cv::INTER_AREA);
+			cuda::resize(gFrame, gCompressed, cv::Size(a / compression , b / compression ), 0.0, 0.0, cv::INTER_AREA); //лучший метод для понижения разрешения
 
 			cuda::cvtColor(gCompressed, gGray, COLOR_BGR2GRAY);
 			cuda::bilateralFilter(gGray, gGray, 5, 5.0, 5.0);
@@ -474,29 +495,29 @@ int main()
 			//std::cout << "State: " << state.t() << std::endl;
 			//std::cout << "State: " << state.at<double>(0, 0) << " " << state.at<double>(2, 0) << " " << state.at<double>(4, 0) << std::endl;
 
-			movementKalman[1].dx = state.at<double>(0, 0);
-			movementKalman[1].dy = state.at<double>(1, 0);
-			movementKalman[1].da = state.at<double>(6, 0);
+			movementKalman[1].dx = state.at<double>(0, 0); //скорость
+			movementKalman[1].dy = state.at<double>(1, 0); //скорость
+			movementKalman[1].da = state.at<double>(6, 0); //скорость
 
-			movementKalman[2].dx = state.at<double>(2, 0);
-			movementKalman[2].dy = state.at<double>(3, 0);
-			movementKalman[2].da = state.at<double>(7, 0);
+			movementKalman[2].dx = state.at<double>(2, 0); //ускорение
+			movementKalman[2].dy = state.at<double>(3, 0); //ускорение
+			movementKalman[2].da = state.at<double>(7, 0); //ускорение
 
-			movementKalman[3].dx = state.at<double>(4, 0);
-			movementKalman[3].dy = state.at<double>(5, 0);
-			movementKalman[3].da = state.at<double>(8, 0);
+			movementKalman[3].dx = state.at<double>(4, 0); //вторая производная ускорения
+			movementKalman[3].dy = state.at<double>(5, 0); //вторая производная ускорения
+			movementKalman[3].da = state.at<double>(8, 0); //вторая производная ускорения
 
-			transforms[0].getTransform(TStab, a, b, c, atan_ba, framePart); //[1]
-			transforms[0].getTransformInvert(TStabInv, a, b, c, atan_ba, framePart); //[1]
+			transforms[0].getTransform(TStab, a, b, c, atan_ba, framePart); // получение текущего компенсирующего преобразования
+			transforms[0].getTransformInvert(TStabInv, a, b, c, atan_ba, framePart); // получение текущего обратного компенсирующего преобразования для отрисовки маски
 
-			if (T.rows == 2 && T.cols == 3)
-			{
-				double xDev = T.at<double>(0, 2);
-				double yDev = T.at<double>(1, 2);
-				// Запись отклонения в CSV файл
-				outputFile << frameCount << "\t" << xDev << "\t" << yDev << "\t" << transforms[0].dx <<"\t" << transforms[0].dy << "\t" 
-					<< transforms[1].dx << "\t" << transforms[1].dy << "\t" << transforms[3].dx << "\t" << transforms[3].dy << endl;
-			}
+			// if (T.rows == 2 && T.cols == 3)
+			// {
+			// 	double xDev = T.at<double>(0, 2);
+			// 	double yDev = T.at<double>(1, 2);
+			// 	// Запись отклонения в CSV файл
+			// 	outputFile << frameCount << "\t" << xDev << "\t" << yDev << "\t" << transforms[0].dx <<"\t" << transforms[0].dy << "\t" 
+			// 		<< transforms[1].dx << "\t" << transforms[1].dy << "\t" << transforms[3].dx << "\t" << transforms[3].dy << endl;
+			// }
 			
 			// Винеровская фильтрация
 			if (wiener && kSwitch > 0.01)
@@ -650,7 +671,7 @@ int main()
 			}
 		}
 		// Ожидание внешних команд управления с клавиатуры
-		int keyboard = waitKey(40);
+		int keyboard = waitKey(1);
 		if (keyResponse(keyboard, frame, frameStabilizatedCropResized, crossRef, gCrossRef, a, b, nsr, wiener, threadwiener, qWiener, tauStab, framePart, roi))
 			break;
 		endFullPing = clock();

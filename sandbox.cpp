@@ -35,65 +35,15 @@ void addGaussianNoise(cv::Mat &image, double mean = 0, double stddev = 20) {
 TransformParam iirNoise(TransformParam &NewSample,vector<TransformParam>& x, vector<TransformParam>& y) {
    
    double FIRCoef[Ntap] = {
-         -40,
-         -16,
-          28,
-          48,
-          21,
-         -31,
-         -56,
-         -25,
-          33,
-          62,
-          29,
-         -34,
-         -66,
-         -32,
-          34,
-          68,
-          34,
-         -32,
-         -66,
-         -34,
-          29,
-          62,
-          33,
-         -25,
-         -56,
-         -31,
-          21,
-          48,
-          28,
-         -16,
-         -40
+         -40, -16, 28, 48, 21, -31, -56, -25, 33, 62, 29, -34, -66, -32, 34, 68, 34, -32, -66, -34, 29, 62, 33, -25, -56,-31, 21, 48, 28, -16, -40
    };
    
    double ACoef[NCoef+1] = {
-          12,
-           0,
-         -60,
-           0,
-         120,
-           0,
-        -120,
-           0,
-          60,
-           0,
-         -12
+          12, 0, -60, 0, 120, 0, -120, 0, 60, 0, -12
    };
 
    double BCoef[NCoef+1] = {
-          64,
-         -70,
-          30,
-         -16,
-          29,
-         -17,
-           5,
-          -1,
-           1,
-           0,
-           0
+          64, -70, 30, -16, 29, -17, 5, -1, 1, 0, 0
    };
 
    int n;
@@ -163,17 +113,17 @@ int main(int, char**)
     bool isColor = (src.type() == CV_8UC3);
     Rect roi;
     
-    roi.x = src.cols * 1 / 8;
-    roi.y = src.rows * 1 / 8;
-    roi.width = src.cols * 3 / 4;
-    roi.height = src.rows * 3 / 4;
+    roi.x = src.cols * 1 / 16;
+    roi.y = src.rows * 1 / 16;
+    roi.width = src.cols * 7 / 8;
+    roi.height = src.rows * 7 / 8;
     
    //--- INITIALIZE VIDEOWRITER
    VideoWriter writer;
-   int codec = VideoWriter::fourcc('M', 'J', 'P', 'G');
-
+//    int codec = VideoWriter::fourcc('M', 'J', 'P', 'G');
+   int codec = VideoWriter::fourcc('a', 'v', 'c', '1');
    double fps = 30.0;
-   string filename = "./OutputVideos/MoveLeftRoadShakedVideo.avi";
+   string filename = "./SourceVideos/FlightShakedVideo.mp4";
 
    writer.open(filename, codec, fps, roi.size(), isColor);
 
@@ -190,9 +140,10 @@ int main(int, char**)
    std::ofstream outputFile("./OutputResults/StabOutputs.txt");
    if (!outputFile.is_open())
    {
-       cout << "bull shit" << endl;
+       cout << "Error open text file " << endl;
        return -1;
    }
+
 
    short cnt = 0;
    for (;;)
@@ -203,9 +154,9 @@ int main(int, char**)
            cerr << "Ending.\n";
            break;
        }
-       noiseIn.dx = (double)(rng.uniform(-100.0, 100.0)) /6          ;// / 32 + noiseIn.dx * 31 / 32;
-       noiseIn.dy = (double)(rng.uniform(-100.0, 100.0)) /8          ;//    / 32 + noiseIn.dy * 31 / 32;
-       noiseIn.da = (double)(rng.uniform(-1000.0, 1000.0) * 0.0001)/8;// / 32 + noiseIn.da * 31 / 32;
+       noiseIn.dx = (double)(rng.uniform(-100.0, 100.0)) /2          ;// / 32 + noiseIn.dx * 31 / 32;
+       noiseIn.dy = (double)(rng.uniform(-100.0, 100.0)) /2          ;//    / 32 + noiseIn.dy * 31 / 32;
+       noiseIn.da = (double)(rng.uniform(-1000.0, 1000.0) * 0.0001)/4;// / 32 + noiseIn.da * 31 / 32;
 
        noiseOut[0] = iirNoise(noiseIn, X,Y);
 
@@ -214,7 +165,7 @@ int main(int, char**)
 
         //добавить смаз
 
-        LEN = sqrt((noiseOut[1].dx - noiseOut[0].dx)*(noiseOut[1].dx - noiseOut[0].dx) + (noiseOut[1].dy - noiseOut[0].dy)*(noiseOut[1].dy - noiseOut[0].dy));
+        LEN = sqrt((noiseOut[1].dx - noiseOut[0].dx)*(noiseOut[1].dx - noiseOut[0].dx) + (noiseOut[1].dy - noiseOut[0].dy)*(noiseOut[1].dy - noiseOut[0].dy))*0.7;
         if ((noiseOut[1].dx - noiseOut[0].dx) == 0.0)
             if ((noiseOut[1].dy - noiseOut[0].dy) > 0.0)
                 THETA = 90.0;
@@ -233,7 +184,7 @@ int main(int, char**)
        writer.write(out);
        // show live and wait for a key with timeout long enough to show images
        cnt++;
-       if (cnt % 60 == 0)
+       if (cnt % 16 == 0)
             imshow("Live", out);
 
     noiseOut[1] = noiseOut[0];
