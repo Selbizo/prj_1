@@ -487,7 +487,10 @@ int main()
 			download(gStatus, status);
 			getBiasAndRotation(p0, p1, d, meanP0, transforms, T, compression); //уже можно делать Винеровскую фильтрацию
 			// iirAdaptive(transforms, tauStab, roi, a, b, c, kSwitch);
-			iirAdaptiveHighPass(transforms, tauStab, roi, a, b, c, kSwitch, movement, movementKalman);
+			//if (abs(movementKalman[1].dx)> 0.5 || abs(movementKalman[1].dy)>0.5 || abs(movementKalman[1].da)> 0.01)
+				iirAdaptiveHighPass(transforms, tauStab, roi, a, b, c, kSwitch, movement, movementKalman);
+			//else
+			//	iirAdaptive(transforms, tauStab, roi, a, b, c, kSwitch, movement, movementKalman);
 
 			kf.update((cv::Mat_<double>(3, 1) << transforms[1].dx, transforms[1].dy, transforms[1].da));
 

@@ -247,7 +247,7 @@ void removeFramePoints(vector<Point2f>& p0, double minDistance)
 	}
 }
 
-void iirAdaptive(vector<TransformParam>& transforms, double& tau_stab, Rect& roi, const int a, const int b, const double c, double& kSwitch)
+void iirAdaptiveOld(vector<TransformParam>& transforms, double& tau_stab, Rect& roi, const int a, const int b, const double c, double& kSwitch)
 {
 	//if ((abs(transforms[0].dx) - 10.0 < 1.2 * transforms[3].dx) && (abs(transforms[0].dy) - 10.0 < 1.2 * transforms[3].dy) && (abs(transforms[0].da) - 0.02 < 1.2 * transforms[3].da))
 	if ((abs(transforms[1].dx) - 20.0 < 4.0 * transforms[3].dx) && (abs(transforms[1].dy) - 20.0 < 4.0 * transforms[3].dy) && (abs(transforms[1].da) - 0.04 < 4.0 * transforms[3].da)) //проверка на выброс в данных должна устраняться фильтром Калмана
@@ -434,5 +434,101 @@ void iirAdaptiveHighPass(vector<TransformParam>& transforms, double& tau_stab, R
 	transforms[2].dx = 0.0; // - movement[1].dx; //coordinate
 	transforms[2].dy = 0.0; // - movement[1].dy; //coordinate
 	transforms[2].da = 0.0; // - movement[1].da; //coordinate
+
+}
+
+void iirAdaptive(vector<TransformParam>& transforms, double& tau_stab, Rect& roi, const int a, const int b, const double c, double& kSwitch, vector<TransformParam>& movement, vector<TransformParam>& movementKalman)//, cv::KalmanFilter& KF)
+{
+	if ((abs(transforms[1].dx) - 20.0 < 3.0 * transforms[3].dx) && (abs(transforms[1].dy) - 20.0 < 3.0 * transforms[3].dy) && (abs(transforms[1].da) - 10.0*DEG_TO_RAD < 3.0 * transforms[3].da)) //проверка на выброс в данных должна устраняться фильтром Калмана
+	{
+		transforms[0].dx = kSwitch * (transforms[0].dx * (tau_stab - 1.0) / tau_stab + kSwitch * transforms[1].dx);
+		transforms[0].dy = kSwitch * (transforms[0].dy * (tau_stab - 1.0) / tau_stab + kSwitch * transforms[1].dy);
+		transforms[0].da = kSwitch * (transforms[0].da * (tau_stab - 1.0) / tau_stab + kSwitch * transforms[1].da);
+	} 
+	else 
+	{
+		cout<<"iirAdaptiveHighPass Explosion Detected"<<endl;
+	}
+
+	if (transforms[0].da > CV_PI)
+		transforms[0].da -= CV_PI;
+
+	if (transforms[0].da < -CV_PI)
+		transforms[0].da +=CV_PI;
+
+	if (tau_stab < 30.0)
+		tau_stab *= 1.2;
+
+	if (tau_stab < 50.0 && !(abs(transforms[0].dx) > a / 2 || abs(transforms[0].dy) > b / 2))
+		tau_stab *= 1.1;
+
+	if (tau_stab < 100.0 && !(abs(transforms[0].dx) > a / 3 || abs(transforms[0].dy) > b / 3))
+	{
+		tau_stab *= 1.1;
+		if (tau_stab > 100.0)
+			tau_stab = 100.0;
+	}
+
+
+	if (roi.x + (int)transforms[0].dx < 0)
+	{
+		transforms[0].dx = double(1 - roi.x);
+		if (tau_stab > 50) {
+			tau_stab *= 0.9;
+			//transforms[0].da *= 0.999;
+			kSwitch *= 0.95;
+		}
+	}
+	else if (roi.x + roi.width + (int)transforms[0].dx >= a)
+	{
+		transforms[0].dx = (double)(a - roi.x - roi.width);
+		if (tau_stab > 50) {
+			tau_stab *= 0.9;
+			//transforms[0].da *= 0.999;
+			kSwitch *= 0.95;
+		}
+	}
+
+	if (roi.y + (int)transforms[1].dy < 0)
+	{
+		transforms[0].dy = (double)(1 - roi.y);
+		if (tau_stab > 10) {
+			tau_stab *= 0.9;
+			//transforms[0].da *= 0.999;
+			kSwitch *= 0.95;
+		}
+	}
+	else if (roi.y + roi.height + (int)transforms[0].dy >= b)
+	{
+		transforms[0].dy = (double)(b - roi.y - roi.height);
+		if (tau_stab > 50) {
+			tau_stab *= 0.9;
+			//transforms[0].da *= 0.999;
+			kSwitch *= 0.95;
+		}
+	}
+
+	if (kSwitch < 1.0)
+		tau_stab *= (4.0 + kSwitch) / 5.0;
+
+	if (true)
+	{
+		transforms[3].dx = (1.0 - 0.1) * transforms[3].dx + 0.1 * abs(transforms[1].dx); //абсолютная средняя ошибка
+		transforms[3].dy = (1.0 - 0.1) * transforms[3].dy + 0.1 * abs(transforms[1].dy); //абсолютная средняя ошибка
+		transforms[3].da = (1.0 - 0.1) * transforms[3].da + 0.1 * abs(transforms[1].da); //абсолютная средняя ошибка
+	}
+
+	double moveTau = 0.8;
+	movement[1].dy = movement[1].dy*moveTau + transforms[0].dy*(1.0 - moveTau); //velocity first derivative
+	movement[1].da = movement[1].da*moveTau + transforms[0].da*(1.0 - moveTau); //velocity first derivative
+	movement[1].dx = movement[1].dx*moveTau + transforms[0].dx*(1.0 - moveTau); //velocity first derivative 
+
+	movement[0].dy = movement[1].dy + movement[0].dy*0.95; //coordinate
+	movement[0].da = movement[1].da + movement[0].da*0.95; //coordinate
+	movement[0].dx = movement[1].dx + movement[0].dx*0.95; //coordinate
+
+	movementKalman[0].dy = movementKalman[1].dy + movementKalman[0].dy*0.988; //coordinate
+	movementKalman[0].da = movementKalman[1].da + movementKalman[0].da*0.988; //coordinate
+	movementKalman[0].dx = movementKalman[1].dx + movementKalman[0].dx*0.988; //coordinate
 
 }
