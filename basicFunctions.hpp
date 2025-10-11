@@ -525,3 +525,14 @@ string trim(const string &str) {
     size_t end = str.find_last_not_of(" \t");
     return str.substr(start, end - start + 1);
 }
+
+
+void loadImage(cv::Mat& image_color, int frame_id, std::string filepath){
+    char file[200];
+    sprintf(file, "image_0/%06d.png", frame_id);
+
+    // sprintf(file, "image_0/%010d.png", frame_id);
+    std::string filename = filepath + std::string(file);
+    image_color = cv::imread(filename, cv::IMREAD_COLOR);
+    //cvtColor(image_color, image_gary, cv::COLOR_BGR2GRAY);
+}

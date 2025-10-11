@@ -16,10 +16,10 @@
 using namespace cv;
 using namespace std;
 
-void initFirstFrame(VideoCapture& capture, Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldCompressed, cuda::GpuMat& gOldGray,
-	cuda::GpuMat& gP0, vector<Point2f>& p0,
-	double& qualityLevel, double& harrisK, int& maxCorners, Ptr<cuda::CornersDetector>& d_features, vector <TransformParam>& transforms,
-	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible);
+// void initFirstFrame(bool cameraInUse, VideoCapture& capture, string filepath, int frame_id, Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldCompressed, cuda::GpuMat& gOldGray,
+// 	cuda::GpuMat& gP0, vector<Point2f>& p0,
+// 	double& qualityLevel, double& harrisK, int& maxCorners, Ptr<cuda::CornersDetector>& d_features, vector <TransformParam>& transforms,
+// 	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible);
 
 void initFirstFrameZero(Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldGray,
 	cuda::GpuMat& gOldCompressed, cuda::GpuMat& gP0, vector<Point2f>& p0,
@@ -34,13 +34,19 @@ void iir(vector<TransformParam>& transforms, double& tau_stab, Rect& roi, Mat& f
 
 
 
-void initFirstFrame(VideoCapture& capture, Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldCompressed, cuda::GpuMat& gOldGray,
+void initFirstFrame(bool cameraInUse, VideoCapture& capture, string filepath, int frame_id, Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldCompressed, cuda::GpuMat& gOldGray,
 	cuda::GpuMat& gP0, vector<Point2f>& p0,
 	double& qualityLevel, double& harrisK, int& maxCorners, Ptr<cuda::CornersDetector>& d_features, vector <TransformParam>& transforms,
 	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible)
 {
-	capture >> oldFrame;
-
+	if(cameraInUse)
+	{
+		capture >> oldFrame;
+	}
+	else
+	{
+		loadImage(oldFrame, frame_id, filepath);
+	}
 	gOldFrame.upload(oldFrame);
 	gOldCompressed.release();
 	cuda::resize(gOldFrame, gOldCompressed, Size(a / compression, b / compression), 0.0, 0.0, cv::INTER_LINEAR);

@@ -120,7 +120,6 @@ int main(int, char**)
     
    //--- INITIALIZE VIDEOWRITER
    VideoWriter writer;
-//    int codec = VideoWriter::fourcc('M', 'J', 'P', 'G');
    int codec = VideoWriter::fourcc('a', 'v', 'c', '1');
    double fps = 30.0;
    string filename = "./SourceVideos/FlightShakedVideo.mp4";
@@ -154,9 +153,9 @@ int main(int, char**)
            cerr << "Ending.\n";
            break;
        }
-       noiseIn.dx = (double)(rng.uniform(-100.0, 100.0)) /2          ;// / 32 + noiseIn.dx * 31 / 32;
-       noiseIn.dy = (double)(rng.uniform(-100.0, 100.0)) /2          ;//    / 32 + noiseIn.dy * 31 / 32;
-       noiseIn.da = (double)(rng.uniform(-1000.0, 1000.0) * 0.0001)/4;// / 32 + noiseIn.da * 31 / 32;
+       noiseIn.dx = (double)(rng.uniform(-100.0, 100.0)) /4          ;// / 32 + noiseIn.dx * 31 / 32;
+       noiseIn.dy = (double)(rng.uniform(-100.0, 100.0)) /4          ;//    / 32 + noiseIn.dy * 31 / 32;
+       noiseIn.da = (double)(rng.uniform(-1000.0, 1000.0) * 0.0001)/8;// / 32 + noiseIn.da * 31 / 32;
 
        noiseOut[0] = iirNoise(noiseIn, X,Y);
 
@@ -178,7 +177,7 @@ int main(int, char**)
         cv::filter2D(out, out, -1, Smooth, cv::Point(-1,-1), 0, cv::BORDER_DEFAULT);
 
        out = out(roi);
-       addGaussianNoise(out, 0, 30);
+       addGaussianNoise(out, 0, 10);
 
        // encode the frame into the videofile stream
        writer.write(out);

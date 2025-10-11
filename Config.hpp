@@ -24,12 +24,12 @@ using namespace std;
 //string videoSource = "./SourceVideos/Forestfhd.mp4"; // pad6-100, pixel4-101, pixel-102
 
 string videoSource = "./SourceVideos/FlightShakedVideo.mp4"; // pad6-100, pixel4-101, pixel-102
-// int videoSource = 0;
+//int videoSource = 0;
 
 bool writeVideo = true;
 bool stabPossible = false;
 
-const int compression = 2; // //4k 1->26ms 2->20ms 3->20ms
+const int compression = 1; // //4k 1->26ms 2->20ms 3->20ms
 
 //
 int	srcType = CV_8UC1;
@@ -47,4 +47,12 @@ int maxLevel = 3 + 4/compression;
 int iters = 10;
 
 
-string videoSourceForShaked = "./SourceVideos/Forestfhd.mp4"; // pad6-100, pixel4-101, pixel-102
+bool cameraInUse = false;
+
+//string videoSourceForShaked = "./SourceVideos/Forestfhd.mp4"; // pad6-100, pixel4-101, pixel-102
+//int videoSourceForShaked = 0; // pad6-100, pixel4-101, pixel-102
+string videoSourceForShaked = "./SourceVideos/ForestShakedVideo.avi"; // pad6-100, pixel4-101, pixel-102
+
+int init_frame_id = 0;
+string filepath = string("/home/selbizo/CV/dataset/sequences/00/");
+//cout << "Filepath: " << filepath << endl;

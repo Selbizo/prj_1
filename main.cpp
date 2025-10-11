@@ -120,9 +120,9 @@ int main()
 		);
 
 	cv::Mat C = (cv::Mat_<double>(meas_dim, state_dim) <<
-		1, 0, 0, 0, 0, 0, 0,0,0,
-		0, 1, 0, 0, 0, 0, 0,0,0,
-		0, 0, 0, 0, 0, 0, 1,0,0
+		1, 0, 0, 0, 0, 0, 0, 0, 0,
+		0, 1, 0, 0, 0, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 1, 0, 0
 		);
 
 	
@@ -179,23 +179,28 @@ int main()
 
 	//~~~~~~~~~~~~~~~~~~~~~~~~~~~Захват первого кадра ~~~~~~~~~~~~~~~~~~~~~~~~~~~//
 	//~~~~~~~~~~~~~~~~~~~~~~для ситывания параметров видеопотока~~~~~~~~~~~~~~~~~//
-
 	VideoCapture capture(videoSource);
+	if (cameraInUse)
+	{
+		//Попытка установить 720p (1280x720)
 
-	//Попытка установить 720p (1280x720)
-
-	// capture.set(cv::CAP_PROP_FRAME_WIDTH, 640);
-	// capture.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
-	// capture.set(cv::CAP_PROP_FPS, 30.0);
+		// capture.set(cv::CAP_PROP_FRAME_WIDTH, 640);
+		// capture.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
+		// capture.set(cv::CAP_PROP_FPS, 30.0);
 	
+		if (!capture.isOpened()) {
+			//error in opening the video input
+			cerr << "Unable to connect camera!" << endl;
+			return 0;
+		}
 
-	if (!capture.isOpened()) {
-		//error in opening the video input
-		cerr << "Unable to connect camera!" << endl;
-		return 0;
+		capture >> oldFrame;
+	}
+	else
+	{
+		loadImage(oldFrame, init_frame_id, filepath);
 	}
 
-	capture >> oldFrame;
 
 	const int a = oldFrame.cols;
 	const int b = oldFrame.rows;
@@ -319,7 +324,7 @@ int main()
 	// outputFile << "FrameNumber\tdx\tdy\tX\tY\ttr2x\ttr2y\ttr3x\ttr3y" << endl;
 	// unsigned short temp_i = 0;
 	
-	int frameCount = 0;
+	//int frameCount = 0;
 	//~~~~~~~~~~~~~~~~~~~~~~~~~~~СОЗДАНИЕ ЭКЗЕМПЛЯРА КЛАССА ЗАПИСИ ВИДЕО
 	VideoWriter writer, writerSmall;
 	cv::Mat writerFrame(oldFrame.rows * 2, oldFrame.cols * 2, CV_8UC3), writerFrameSmall(oldFrame.rows, oldFrame.cols, CV_8UC3);
@@ -350,16 +355,18 @@ int main()
 	//~~~~~~~~~~~~~~~~~~~~~~~~~~~Начало работы алгоритма~~~~~~~~~~~~~~~~~~~~~~~~//
 
 	while (true) {
-		initFirstFrame(capture, oldFrame, gOldFrame, gOldCompressed, gOldGray, 
+		initFirstFrame(cameraInUse, capture, filepath, init_frame_id, oldFrame, gOldFrame, gOldCompressed, gOldGray, 
 			gP0, p0, qualityLevel, harrisK, maxCorners, d_features, transforms, 
 			kSwitch, a, b, compression , gMaskSearch, stabPossible);
+			init_frame_id++;
 		if (stabPossible)
 			break;
 	}
 
-	while (true) {
+	// while (true) {
+	for(int frameCount = init_frame_id + 1; frameCount < 4500; frameCount++){
 		secondsFullPing = 0.96 * secondsFullPing + 0.04 * (double)(endFullPing - startFullPing) / CLOCKS_PER_SEC;
-		++frameCount;
+		//++frameCount;
 		startFullPing = clock();
 
 		secondsGPUPing = 0.96 * secondsGPUPing + 0.04 * (double)(endGPUPing - startGPUPing) / CLOCKS_PER_SEC;
@@ -399,7 +406,16 @@ int main()
 			}else if (kSwitch > 1.0)
 				kSwitch = 1.0;
 
-			capture >> frame;
+			//capture >> frame;
+
+			if(cameraInUse)
+			{
+				capture >> frame;
+			}
+			else
+			{
+				loadImage(frame, frameCount, filepath);
+			}
 		}
 
 		if (frameCnt % 128 == 1)
@@ -409,7 +425,7 @@ int main()
 			start = clock();
 		}
 
-		if (frame.empty())
+		if (frame.empty() && cameraInUse)
 		{
 			capture.release();
 			capture = VideoCapture(videoSource);
@@ -442,7 +458,14 @@ int main()
 
 			//gOldGray.release();
 			
-			capture >> frame;
+			if(cameraInUse)
+			{
+				capture >> frame;
+			}
+			else
+			{
+				loadImage(frame, frameCount, filepath);
+			}
 
 			if (!stabPossible) {
 				cv::rectangle(writerFrame, Rect(a, b, a, b), Scalar(0, 0, 0), FILLED); // Прямоугольная маска
@@ -456,7 +479,7 @@ int main()
 
 			if (frameCnt % 10 == 1 && !stabPossible)
 			{
-				initFirstFrame(capture, oldFrame, gOldFrame, gOldGray, gOldCompressed, 
+				initFirstFrame(cameraInUse, capture, filepath, frameCount, oldFrame, gOldFrame, gOldGray, gOldCompressed, 
 					gP0, p0, qualityLevel, harrisK, maxCorners, d_features, transforms, 
 					kSwitch, a, b, compression , gMaskSearch, stabPossible); //70ms
 			} 
@@ -603,17 +626,17 @@ int main()
 
 				writer.write(writerFrame);
 				writerSmall.write(frameStabilizatedCropResized);
-				cv::resize(writerFrame, writerFrameToShow, cv::Size(1080*a/b, 1080), 0.0, 0.0, cv::INTER_LINEAR);
+				cv::resize(writerFrame, writerFrameToShow, cv::Size(1080, 1080*b/a), 0.0, 0.0, cv::INTER_LINEAR);
 				cv::imshow("Writed", writerFrameToShow);
 				//writer.write(writerFrameToShow);
 			}
 			if(!writeVideo) {
-				cv::cuda::resize(gFrameStabilizatedCrop, gWriterFrameToShow, cv::Size(1080*a/b, 1080), 0.0, 0.0, cv::INTER_NEAREST);
+				cv::cuda::resize(gFrameStabilizatedCrop, gWriterFrameToShow, cv::Size(1080, 1080*b/a), 0.0, 0.0, cv::INTER_NEAREST);
 				gWriterFrameToShow.download(writerFrameToShow);
 				
 				showServiceInfoSmall(writerFrameToShow, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movementKalman, tauStab, kSwitch, framePart, gP0.cols, maxCorners,
 					seconds, secondsGPUPing, secondsFullPing, a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab,
-					fontFace, fontScale, colorRED);
+					fontFace, fontScale, colorGREEN);
 
 				cv::imshow("Writed", writerFrameToShow);
 			}
@@ -657,13 +680,13 @@ int main()
 
 				writer.write(writerFrame);
 				writerSmall.write(frameStabilizatedCropResized);
-				cv::resize(writerFrame, writerFrameToShow, cv::Size(1080*a/b, 1080), 0.0, 0.0, cv::INTER_NEAREST);
+				cv::resize(writerFrame, writerFrameToShow, cv::Size(1080, 1080*b/a), 0.0, 0.0, cv::INTER_NEAREST);
 				cv::imshow("Writed", writerFrameToShow);
 
 			}
 			else 
 			{
-				cv::cuda::resize(gFrameStabilizatedCrop, gWriterFrameToShow, cv::Size(1080*a/b, 1080), 0.0, 0.0, cv::INTER_NEAREST);
+				cv::cuda::resize(gFrameStabilizatedCrop, gWriterFrameToShow, cv::Size(1080, 1080*b/a), 0.0, 0.0, cv::INTER_NEAREST);
 				gWriterFrameToShow.download(writerFrameToShow);
 				
 				showServiceInfoSmall(writerFrameToShow, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movementKalman, tauStab, kSwitch, framePart, gP0.cols, maxCorners,
