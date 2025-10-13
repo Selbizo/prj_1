@@ -1,1 +1,0 @@
-/usr/bin/c++ -fPIC -g -shared -Wl,-soname,libstabilizationFunctions.so -o libstabilizationFunctions.so CMakeFiles/stabilizationFunctions.dir/stabilizationFunctions.cpp.o 
