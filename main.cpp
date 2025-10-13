@@ -10,8 +10,67 @@ using namespace cv;
 using namespace std;
 namespace fs = std::filesystem;
 
+#define NCoef 10
+#define DCgain 4
+
+#define Ntap 31
+
+TransformParam iirNoise(TransformParam &NewSample,vector<TransformParam>& x, vector<TransformParam>& y) {
+   
+   double FIRCoef[Ntap] = {
+         -40, -16, 28, 48, 21, -31, -56, -25, 33, 62, 29, -34, -66, -32, 34, 68, 34, -32, -66, -34, 29, 62, 33, -25, -56,-31, 21, 48, 28, -16, -40
+   };
+   
+   double ACoef[NCoef+1] = {
+          12, 0, -60, 0, 120, 0, -120, 0, 60, 0, -12
+   };
+
+   double BCoef[NCoef+1] = {
+          64, -70, 30, -16, 29, -17, 5, -1, 1, 0, 0
+   };
+
+   int n;
+
+   //shift the old samples
+   for(n=NCoef; n>0; n--) {
+      x[n] = x[n-1];
+      y[n] = y[n-1];
+   }
+
+   //Calculate the new output
+   x[0] = NewSample;
+   y[0].dx = ACoef[0] * x[0].dx;
+   y[0].dy = ACoef[0] * x[0].dy;
+   y[0].da = ACoef[0] * x[0].da;
+
+   for (n = 1; n <= NCoef; n++)
+   {
+       y[0].dx += ACoef[n] * x[n].dx - BCoef[n] * y[n].dx;
+       y[0].dy += ACoef[n] * x[n].dy - BCoef[n] * y[n].dy;
+       y[0].da += ACoef[n] * x[n].da - BCoef[n] * y[n].da;
+
+   }
+
+   y[0].dy /= (BCoef[0]*DCgain);
+   y[0].da /= (BCoef[0]*DCgain);
+   y[0].dx /= (BCoef[0]*DCgain);
+
+   return y[0];
+}
+
+
+
 int main()
 {
+	TransformParam noiseIn = { 0.0, 0.0, 0.0 };
+	vector <TransformParam> noiseOut(2);
+	for (int i = 0; i < noiseOut.size();i++)
+		noiseOut[i] = {0.0, 0.0, 0.0};
+	
+	cv::Mat TShake(2, 3, CV_64F);
+
+	vector <TransformParam> X(1+NCoef), Y(1 + NCoef);
+
 	//Автоматическое создание папок
 	vector <std::string> folderPath(4); 
 	folderPath[0] = "./OutputVideos";
@@ -35,9 +94,9 @@ int main()
 	RNG rng;
 	for (int i = 0; i < 1000; i++)
 	{
-		unsigned short b = rng.uniform(120, 255);
-		unsigned short g = rng.uniform( 60, 190);
-		unsigned short r = rng.uniform(165, 225);
+		unsigned short b = rng.uniform(100, 230);
+		unsigned short g = rng.uniform(100, 230);
+		unsigned short r = rng.uniform(100, 230);
 		colors.push_back(Scalar(b, g, r));
 	}
 	// детектор для поиска характерных точек
@@ -234,7 +293,7 @@ int main()
 		gFrameRoi(roi.width, roi.height, CV_8UC3),
 		gFrameOut(a, b, CV_8UC3),
 		gFrameStabilizatedCropResized(a, b, CV_8UC3),
-		gWriterFrameToShow(1080*a/b, 1080, CV_8UC3);
+		gWriterFrameToShow(2000, 2000*b/a, CV_8UC3);
 
 	Mat crossRef(b, a, CV_8UC3), cross(b, a, CV_8UC3);
 	crossRef.setTo(colorBLACK); // покрасили в один цвет
@@ -250,7 +309,8 @@ int main()
 	//~~~~~~~~~~~~~~~~~~~~~~~~~~~Для отображения надписей на кадре~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	int fontFace = FONT_HERSHEY_SIMPLEX;
 
-	double fontScale = 1.0*min(a,b)/1080;
+	//double fontScale = 1.0*min(a,b)/1080;
+	double fontScale = 1.0;
 	if (writeVideo == true)
 		fontScale = fontScale;
 
@@ -374,8 +434,8 @@ int main()
 			good_new.clear();
 			for (uint i = 0; i < p1.size(); ++i)
 			{
-				if (status[i] && p1[i].x < (double)(a*31 / 32) && p1[i].x > (double)(a * 1 / 32) && 
-					p1[i].y < (double)(b * 31 / 32) && p1[i].y > (double)(b * 1 / 16) 
+				if (status[i] && p1[i].x < (double)(a * 25 / 32) && p1[i].x > (double)(a * 6 / 32) && 
+					p1[i].y < (double)(b * 25 / 32) && p1[i].y > (double)(b * 6 / 32) //remove point close to the edges
 					)
 				{
 					good_new.push_back(p1[i]);
@@ -416,6 +476,16 @@ int main()
 			{
 				loadImage(frame, frameCount, filepath);
 			}
+
+
+			noiseIn.dx = (double)(rng.uniform(-100.0, 100.0)) /4          ;// / 32 + noiseIn.dx * 31 / 32;
+       		noiseIn.dy = (double)(rng.uniform(-100.0, 100.0)) /4          ;//    / 32 + noiseIn.dy * 31 / 32;
+       		noiseIn.da = (double)(rng.uniform(-1000.0, 1000.0) * 0.0001)/8;// / 32 + noiseIn.da * 31 / 32;
+
+       		noiseOut[0] = iirNoise(noiseIn, X, Y);
+
+    		noiseOut[0].getTransform(TShake);
+    		warpAffine(frame, frame, TShake, frame.size());
 		}
 
 		if (frameCnt % 128 == 1)
@@ -444,7 +514,7 @@ int main()
 
 			cuda::resize(gFrame, gCompressed, cv::Size(a / compression , b / compression ), 0.0, 0.0, cv::INTER_AREA); //лучший метод для понижения разрешения
 			cuda::cvtColor(gCompressed, gGray, COLOR_BGR2GRAY);
-			cuda::bilateralFilter(gGray, gGray, 5, 5.0, 5.0);
+			cuda::bilateralFilter(gGray, gGray, 3, 1.0, 1.0); //make it adaptive to SNR
 		}
 
 		if ((gP0.cols < maxCorners * 1 / 5) || !stabPossible)
@@ -466,6 +536,15 @@ int main()
 			{
 				loadImage(frame, frameCount, filepath);
 			}
+			
+			noiseIn.dx = (double)(rng.uniform(-10.0, 10.0));
+       		noiseIn.dy = (double)(rng.uniform(-10.0, 10.0));
+       		noiseIn.da = (double)(rng.uniform(-0.1, 0.1));
+
+       		noiseOut[0] = iirNoise(noiseIn, X, Y);
+
+    		noiseOut[0].getTransform(TShake);
+    		warpAffine(frame, frame, TShake, frame.size());
 
 			if (!stabPossible) {
 				cv::rectangle(writerFrame, Rect(a, b, a, b), Scalar(0, 0, 0), FILLED); // Прямоугольная маска
@@ -475,7 +554,7 @@ int main()
 			cuda::resize(gFrame, gCompressed, cv::Size(a / compression , b / compression ), 0.0, 0.0, cv::INTER_AREA); //лучший метод для понижения разрешения
 
 			cuda::cvtColor(gCompressed, gGray, COLOR_BGR2GRAY);
-			cuda::bilateralFilter(gGray, gGray, 5, 5.0, 5.0);
+			cuda::bilateralFilter(gGray, gGray, 3, 1.0, 1.0); //make it adaptive to SNR
 
 			if (frameCnt % 10 == 1 && !stabPossible)
 			{
@@ -557,7 +636,7 @@ int main()
 				else
 					THETA = atan(transforms[1].dy / transforms[1].dx) * RAD_TO_DEG;
 
-				cuda::bilateralFilter(gFrame, gFrame, 5, 5.0, 5.0);
+				cuda::bilateralFilter(gFrame, gFrame, 3, 1.0, 1.0);
 				gFrame.convertTo(gFrame, CV_32F);
 				cuda::split(gFrame, gChannels);
 
@@ -588,7 +667,7 @@ int main()
 				}
 				cuda::merge(gChannelsWiener, gFrame);
 				gFrame.convertTo(gFrame, CV_8UC3);
-				cuda::bilateralFilter(gFrame, gFrame, 5, 5.0, 5.0);
+				cuda::bilateralFilter(gFrame, gFrame, 3, 1.0, 1.0);
 			}
 
 			cuda::warpAffine(gFrame, gFrameStabilized, TStab, cv::Size(a, b)); //8ms
@@ -618,7 +697,7 @@ int main()
 
 				if (p0.size() > 0)
 					for (uint i = 0; i < p0.size(); i++)
-						circle(writerFrame, cv::Point2f(p1[i].x*compression + a, p1[i].y*compression), 4, colors[i], -1);
+						circle(writerFrame, cv::Point2f(p1[i].x*compression + a, p1[i].y*compression), 3, colors[i], -1);
 								
 				showServiceInfo(writerFrame, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movement, movementKalman,tauStab, kSwitch, framePart, gP0.cols, maxCorners,
 					seconds, secondsGPUPing, secondsFullPing, a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab, 
@@ -626,12 +705,12 @@ int main()
 
 				writer.write(writerFrame);
 				writerSmall.write(frameStabilizatedCropResized);
-				cv::resize(writerFrame, writerFrameToShow, cv::Size(1080, 1080*b/a), 0.0, 0.0, cv::INTER_LINEAR);
+				cv::resize(writerFrame, writerFrameToShow, cv::Size(2000, 2000*b/a), 0.0, 0.0, cv::INTER_LINEAR);
 				cv::imshow("Writed", writerFrameToShow);
 				//writer.write(writerFrameToShow);
 			}
 			if(!writeVideo) {
-				cv::cuda::resize(gFrameStabilizatedCrop, gWriterFrameToShow, cv::Size(1080, 1080*b/a), 0.0, 0.0, cv::INTER_NEAREST);
+				cv::cuda::resize(gFrameStabilizatedCrop, gWriterFrameToShow, cv::Size(2000, 2000*b/a), 0.0, 0.0, cv::INTER_NEAREST);
 				gWriterFrameToShow.download(writerFrameToShow);
 				
 				showServiceInfoSmall(writerFrameToShow, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movementKalman, tauStab, kSwitch, framePart, gP0.cols, maxCorners,
@@ -680,13 +759,13 @@ int main()
 
 				writer.write(writerFrame);
 				writerSmall.write(frameStabilizatedCropResized);
-				cv::resize(writerFrame, writerFrameToShow, cv::Size(1080, 1080*b/a), 0.0, 0.0, cv::INTER_NEAREST);
+				cv::resize(writerFrame, writerFrameToShow, cv::Size(2000, 2000*b/a), 0.0, 0.0, cv::INTER_NEAREST);
 				cv::imshow("Writed", writerFrameToShow);
 
 			}
 			else 
 			{
-				cv::cuda::resize(gFrameStabilizatedCrop, gWriterFrameToShow, cv::Size(1080, 1080*b/a), 0.0, 0.0, cv::INTER_NEAREST);
+				cv::cuda::resize(gFrameStabilizatedCrop, gWriterFrameToShow, cv::Size(2000, 2000*b/a), 0.0, 0.0, cv::INTER_NEAREST);
 				gWriterFrameToShow.download(writerFrameToShow);
 				
 				showServiceInfoSmall(writerFrameToShow, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movementKalman, tauStab, kSwitch, framePart, gP0.cols, maxCorners,
@@ -697,7 +776,7 @@ int main()
 			}
 		}
 		// Ожидание внешних команд управления с клавиатуры
-		int keyboard = waitKey(1);
+		int keyboard = waitKey(80);
 		if (keyResponse(keyboard, frame, frameStabilizatedCropResized, crossRef, gCrossRef, a, b, nsr, wiener, threadwiener, qWiener, tauStab, framePart, roi))
 			break;
 		endFullPing = clock();

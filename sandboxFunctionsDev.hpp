@@ -1,5 +1,5 @@
 #pragma once
-//Алгоритм стабилизации видео на основе вычисление Lucas-Kanade Optical Flow
+//пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ Lucas-Kanade Optical Flow
 //
 
 #include "opencv2/video/tracking.hpp"
@@ -31,7 +31,7 @@ using namespace std;
 
 Mat videoStabHomograpy(cuda::GpuMat& gFrame, vector<Point2f>& p0, vector<Point2f>& p1, vector<Mat>& homoTransforms)
 {
-	// Вычисляем гомографию
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	Mat H;
 	if (p0.size() >= 4) {
 		H = findHomography(p0, p1, RANSAC);
@@ -44,7 +44,7 @@ Mat videoStabHomograpy(cuda::GpuMat& gFrame, vector<Point2f>& p0, vector<Point2f
 	if (homoTransforms.size() < 400) {
 		return homoTransforms.back();
 	}
-	// Вычисляем среднее преобразование в окне
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅ
 	Mat sumH = Mat::zeros(3, 3, CV_64F);
 	int count = 0;
 	for (int i = homoTransforms.size() - 400; i < homoTransforms.size(); i++) {
@@ -60,26 +60,26 @@ void readFrameFromCapture(VideoCapture* capture, Mat* frame)
 
 }
 
-// Структура для хранения углов ориентации
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 struct OrientationAngles {
-	double roll; // Крен (радианы)
-	double pitch; // Тангаж (радианы)
-	double yaw; // Рыскание (радианы)
+	double roll; // пїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅпїЅпїЅ)
+	double pitch; // пїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅпїЅпїЅ)
+	double yaw; // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅпїЅпїЅ)
 };
 
-// Функция для оценки ориентации по гомографии
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 OrientationAngles estimateOrientationFromHomography(const cv::Mat& H, double focalLength, double cx, double cy) {
 	OrientationAngles angles;
 
-	// Нормализация матрицы гомографии
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	cv::Mat Hnorm = H / H.at<double>(2, 2);
 
-	// Извлечение компонент вращения
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	double h11 = Hnorm.at<double>(0, 0), h12 = Hnorm.at<double>(0, 1), h13 = Hnorm.at<double>(0, 2);
 	double h21 = Hnorm.at<double>(1, 0), h22 = Hnorm.at<double>(1, 1), h23 = Hnorm.at<double>(1, 2);
 	double h31 = Hnorm.at<double>(2, 0), h32 = Hnorm.at<double>(2, 1), h33 = Hnorm.at<double>(2, 2);
 
-	// Вычисление углов
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	angles.yaw = atan2(h21, h11);
 	angles.pitch = atan2(-h31, sqrt(h32 * h32 + h33 * h33));
 	angles.roll = atan2(h32, h33);
@@ -87,36 +87,36 @@ OrientationAngles estimateOrientationFromHomography(const cv::Mat& H, double foc
 	return angles;
 }
 
-// Основная функция обработки
+// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 OrientationAngles estimateUAVOrientation(cv::cuda::GpuMat& currentFrame, cv::cuda::GpuMat& previousFrame,
 	double focalLength, double cx, double cy) {
-	// Преобразование в grayscale
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ grayscale
 	cv::cuda::GpuMat prevGray, currGray;
 	cv::cuda::cvtColor(previousFrame, prevGray, cv::COLOR_BGR2GRAY);
 	cv::cuda::cvtColor(currentFrame, currGray, cv::COLOR_BGR2GRAY);
 
-	// Детекция особенностей (используем ORB на GPU)
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ (пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ ORB пїЅпїЅ GPU)
 	auto detector = cv::cuda::ORB::create(1000);
 
-	// Для хранения ключевых точек и дескрипторов
+	// пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	std::vector<cv::KeyPoint> prevKeypoints, currKeypoints;
 	cv::cuda::GpuMat prevDescriptorsGPU, currDescriptorsGPU;
 
-	// Детекция и вычисление дескрипторов
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	detector->detectAndCompute(prevGray, cv::cuda::GpuMat(), prevKeypoints, prevDescriptorsGPU);
 	detector->detectAndCompute(currGray, cv::cuda::GpuMat(), currKeypoints, currDescriptorsGPU);
 
-	// Конвертируем дескрипторы в CPU формат
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ CPU пїЅпїЅпїЅпїЅпїЅпїЅ
 	cv::Mat prevDescriptors, currDescriptors;
 	prevDescriptorsGPU.download(prevDescriptors);
 	currDescriptorsGPU.download(currDescriptors);
 
-	// Сопоставление особенностей
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	auto matcher = cv::DescriptorMatcher::create("BruteForce-Hamming");
 	std::vector<cv::DMatch> matches;
 	matcher->match(prevDescriptors, currDescriptors, matches);
 
-	// Фильтрация хороших соответствий
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	double minDist = DBL_MAX;
 	for (const auto& m : matches) {
 		if (m.distance < minDist) minDist = m.distance;
@@ -129,24 +129,24 @@ OrientationAngles estimateUAVOrientation(cv::cuda::GpuMat& currentFrame, cv::cud
 		}
 	}
 
-	// Получаем точки соответствий
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	std::vector<cv::Point2f> prevPoints, currPoints;
 	for (const auto& m : goodMatches) {
 		prevPoints.push_back(prevKeypoints[m.queryIdx].pt);
 		currPoints.push_back(currKeypoints[m.trainIdx].pt);
 	}
 
-	// Вычисляем гомографию
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	cv::Mat H;
 	if (prevPoints.size() >= 4) {
 		H = cv::findHomography(prevPoints, currPoints, cv::RANSAC, 3.0);
 	}
 	else {
-		// Недостаточно точек для оценки
+		// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 		return OrientationAngles{ 0, 0, 0 };
 	}
 
-	// Оцениваем углы ориентации из гомографии
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	return estimateOrientationFromHomography(H, focalLength, cx, cy);
 }
 
@@ -169,3 +169,4 @@ OrientationAngles estimateUAVOrientation(cv::cuda::GpuMat& currentFrame, cv::cud
 //	addP0.clear();
 //	}
 //}
+

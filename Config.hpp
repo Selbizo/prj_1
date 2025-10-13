@@ -34,9 +34,9 @@ const int compression = 1; // //4k 1->26ms 2->20ms 3->20ms
 //
 int	srcType = CV_8UC1;
 int maxCorners = 400 / compression; //100/n
-double qualityLevel = 0.003 / compression; //0.0001
-double minDistance = 6.0 / compression + 3.0; //8.0
-int blockSize = 40 / compression + 8; //45 80 
+double qualityLevel = 0.0003 / compression; //0.0001
+double minDistance = 2.0 / compression + 3.0; //8.0
+int blockSize = 20 / compression + 8; //45 80 
 bool useHarrisDetector = true;
 double harrisK = qualityLevel;
 

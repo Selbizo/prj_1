@@ -231,18 +231,21 @@ void removeFramePoints(vector<Point2f>& p0, double minDistance)
 	for (size_t i = 0; i < p0.size(); ++i) {
 		if (toRemove[i]) continue; 
 
-		for (size_t j = i + 1; j < p0.size(); ++j) {
-			if (p0[j].x - p0[i].x > minDistance) {
+		for (size_t j = i + 1; j < p0.size(); ++j) 
+		{
+			if (p0[j].x - p0[i].x > minDistance) 
 				break; 
-			}
+			
 
+			if (p0[j].y - p0[i].y > minDistance) 
+				break; 
+			
 			float dx = p0[j].x - p0[i].x;
 			float dy = p0[j].y - p0[i].y;
 			float distanceSq = dx * dx + dy * dy;
 
-			if (distanceSq < minDistance * minDistance) {
+			if (distanceSq < minDistance * minDistance) 
 				toRemove[j] = true;
-			}
 		}
 	}
 
