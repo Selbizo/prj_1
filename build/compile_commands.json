@@ -1,0 +1,22 @@
+[
+{
+  "directory": "/home/selbizo/CV/prj_1/build/src",
+  "command": "/usr/bin/c++ -DbasicFunctions_EXPORTS -I/usr/local/include/opencv4 -g -fPIC -o CMakeFiles/basicFunctions.dir/basicFunctions.cpp.o -c /home/selbizo/CV/prj_1/src/basicFunctions.cpp",
+  "file": "/home/selbizo/CV/prj_1/src/basicFunctions.cpp"
+},
+{
+  "directory": "/home/selbizo/CV/prj_1/build/src",
+  "command": "/usr/bin/c++ -DstabilizationFunctions_EXPORTS -I/usr/local/include/opencv4 -g -fPIC -o CMakeFiles/stabilizationFunctions.dir/stabilizationFunctions.cpp.o -c /home/selbizo/CV/prj_1/src/stabilizationFunctions.cpp",
+  "file": "/home/selbizo/CV/prj_1/src/stabilizationFunctions.cpp"
+},
+{
+  "directory": "/home/selbizo/CV/prj_1/build/src",
+  "command": "/usr/bin/c++ -DwienerFilter_EXPORTS -I/usr/local/include/opencv4 -g -fPIC -o CMakeFiles/wienerFilter.dir/wienerFilter.cpp.o -c /home/selbizo/CV/prj_1/src/wienerFilter.cpp",
+  "file": "/home/selbizo/CV/prj_1/src/wienerFilter.cpp"
+},
+{
+  "directory": "/home/selbizo/CV/prj_1/build/src",
+  "command": "/usr/bin/c++  -isystem /usr/local/include/opencv4 -g -o CMakeFiles/run.dir/main.cpp.o -c /home/selbizo/CV/prj_1/src/main.cpp",
+  "file": "/home/selbizo/CV/prj_1/src/main.cpp"
+}
+]

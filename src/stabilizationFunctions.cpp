@@ -1,38 +1,83 @@
-// Функции отвечающие за стабилизацию
-#pragma once
+// // подключение необходимых модулей OpenCV
+// #include <opencv2/core.hpp>          
+// #include <opencv2/imgproc.hpp>       
+// #include <opencv2/videoio.hpp>       
+// #include <opencv2/core/cuda.hpp>     
+// #include <opencv2/cudaarithm.hpp>    
+// #include <opencv2/cudaimgproc.hpp>   
+// #include <opencv2/calib3d.hpp>  
 
-// подключение необходимых модулей OpenCV
-#include <opencv2/core.hpp>          
-#include <opencv2/imgproc.hpp>       
-#include <opencv2/videoio.hpp>       
-#include <opencv2/core/cuda.hpp>     
-#include <opencv2/cudaarithm.hpp>    
-#include <opencv2/cudaimgproc.hpp>   
-#include <opencv2/calib3d.hpp>  
+// #include <vector>    // std::vector
+// #include <iostream>  // std::cout
 
-#include <vector>    // std::vector
-#include <iostream>  // std::cout
+
+#include "stabilizationFunctions.h"
 
 using namespace cv;
 using namespace std;
 
-// void initFirstFrame(bool cameraInUse, VideoCapture& capture, string filepath, int frame_id, Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldCompressed, cuda::GpuMat& gOldGray,
-// 	cuda::GpuMat& gP0, vector<Point2f>& p0,
-// 	double& qualityLevel, double& harrisK, int& maxCorners, Ptr<cuda::CornersDetector>& d_features, vector <TransformParam>& transforms,
-// 	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible);
 
-void initFirstFrameZero(Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldGray,
-	cuda::GpuMat& gOldCompressed, cuda::GpuMat& gP0, vector<Point2f>& p0,
+void createDetectors(Ptr<cuda::CornersDetector>& d_features, Ptr<cuda::CornersDetector>& d_features_small,
+			Ptr<cuda::SparsePyrLKOpticalFlow>& d_pyrLK_sparse)
+			//,int srcType, int& maxCorners, double& qualityLevel, double& minDistance, int blockSize, bool useHarrisDetector, double& harrisK)
+{
+	d_features = cv::cuda::createGoodFeaturesToTrackDetector(srcType,
+		maxCorners, qualityLevel, minDistance, blockSize, useHarrisDetector, harrisK);
+		
+	d_features_small = cv::cuda::createGoodFeaturesToTrackDetector(srcType,
+		20, qualityLevel*1.5, minDistance*1.5, blockSize, useHarrisDetector, harrisK);
+	
+	d_pyrLK_sparse = cuda::SparsePyrLKOpticalFlow::create(
+		cv::Size(winSize, winSize), maxLevel, iters);
+}
+
+
+void initFirstFrame(VideoCapture& capture, Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldCompressed, cuda::GpuMat& gOldGray,
+	cuda::GpuMat& gP0, vector<Point2f>& p0,
 	double& qualityLevel, double& harrisK, int& maxCorners, Ptr<cuda::CornersDetector>& d_features, vector <TransformParam>& transforms,
-	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible);
+	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible)
+{
+	capture >> oldFrame;
 
-void getBiasAndRotation(vector<Point2f>& p0, vector<Point2f>& p1, Point2f& d,
-	vector <TransformParam>& transforms, Mat& T, const int compression);
+	gOldFrame.upload(oldFrame);
+	gOldCompressed.release();
+	cuda::resize(gOldFrame, gOldCompressed, Size(a / compression, b / compression), 0.0, 0.0, cv::INTER_LINEAR);
+	cuda::cvtColor(gOldCompressed, gOldGray, COLOR_BGR2GRAY);
+	//cuda::bilateralFilter(gOldGray, gOldGray, 3, 3.0, 1.0); //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	//cuda::resize(gOldGray, gOldGray, Size(gOldGray.cols / frame compression , gOldGray.rows / frame compression ), 0.0, 0.0, cv::INTER_AREA);
 
-void iir(vector<TransformParam>& transforms, double& tau_stab, Rect& roi, Mat& frame);
+	if (qualityLevel > 0.001 && harrisK > 0.001)
+	{
+		qualityLevel *= 0.6;
+		harrisK *= 0.6;
+	}
+	else
+	{
+		if (maxCorners > 50)
+		{
+			maxCorners *= 0.98;
+			d_features->setMaxCorners(maxCorners);
+		}
+	}
+	for (int i = 0; i < 1;i++)
+	{
+		transforms[i].dx *= kSwitch;
+		transforms[i].dy *= kSwitch;
+		transforms[i].da *= kSwitch;
+	}
 
+	d_features->detect(gOldGray, gP0, mask_device);
 
+	if ((gP0.cols > 20)) {
 
+		p0.clear();
+		gP0.download(p0);
+		stab_possible = true; //true
+	}
+	else {
+		stab_possible = false;
+	}
+}
 
 void initFirstFrame(bool cameraInUse, VideoCapture& capture, string filepath, int frame_id, Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldCompressed, cuda::GpuMat& gOldGray,
 	cuda::GpuMat& gP0, vector<Point2f>& p0,
@@ -75,6 +120,53 @@ void initFirstFrame(bool cameraInUse, VideoCapture& capture, string filepath, in
 	}
 
 	d_features->detect(gOldGray, gP0, mask_device);
+
+	if ((gP0.cols > 20)) {
+
+		p0.clear();
+		gP0.download(p0);
+		stab_possible = true; //true
+	}
+	else {
+		stab_possible = false;
+	}
+}
+
+
+void initFirstFrame(cuda::GpuMat& gOldGray,
+	cuda::GpuMat& gP0, vector<Point2f>& p0,
+	double& qualityLevel, double& harrisK, int& maxCorners, Ptr<cuda::CornersDetector>& d_features, vector <TransformParam>& transforms,
+	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible)
+{
+	if (qualityLevel > 0.001 && harrisK > 0.001)
+	{
+		qualityLevel *= 0.6;
+		harrisK *= 0.6;
+	}
+	else
+	{
+		if (maxCorners > 50)
+		{
+			maxCorners *= 0.98;
+			d_features->setMaxCorners(maxCorners);
+		}
+	}
+	for (int i = 0; i < 1;i++)
+	{
+		transforms[i].dx *= kSwitch;
+		transforms[i].dy *= kSwitch;
+		transforms[i].da *= kSwitch;
+	}
+	cout << mask_device.empty() << endl;
+	cout << (mask_device.type() == CV_8UC1) << endl;
+	cout << (mask_device.size() == gOldGray.size()) << endl;
+	cout << (mask_device.size()) << endl;
+	cout << (gOldGray.size()) << endl;
+	// Mat temp;
+	// gOldGray.download(temp);
+	// cv::imshow("image temp", temp);
+	d_features->detect(gOldGray, gP0);
+	// d_features->detect(gOldGray, gP0, mask_device);
 
 	if ((gP0.cols > 20)) {
 
@@ -231,21 +323,18 @@ void removeFramePoints(vector<Point2f>& p0, double minDistance)
 	for (size_t i = 0; i < p0.size(); ++i) {
 		if (toRemove[i]) continue; 
 
-		for (size_t j = i + 1; j < p0.size(); ++j) 
-		{
-			if (p0[j].x - p0[i].x > minDistance) 
+		for (size_t j = i + 1; j < p0.size(); ++j) {
+			if (p0[j].x - p0[i].x > minDistance) {
 				break; 
-			
+			}
 
-			if (p0[j].y - p0[i].y > minDistance) 
-				break; 
-			
 			float dx = p0[j].x - p0[i].x;
 			float dy = p0[j].y - p0[i].y;
 			float distanceSq = dx * dx + dy * dy;
 
-			if (distanceSq < minDistance * minDistance) 
+			if (distanceSq < minDistance * minDistance) {
 				toRemove[j] = true;
+			}
 		}
 	}
 
@@ -541,3 +630,21 @@ void iirAdaptive(vector<TransformParam>& transforms, double& tau_stab, Rect& roi
 	movementKalman[0].dx = movementKalman[1].dx + movementKalman[0].dx*0.988; //coordinate
 
 }
+
+
+void loadImage(cv::Mat& image_color, int frame_id, std::string filepath){
+    char file[200];
+    sprintf(file, "image_0/%06d.png", frame_id);
+
+    // sprintf(file, "image_0/%010d.png", frame_id);
+    std::string filename = filepath + std::string(file);
+    image_color = cv::imread(filename, cv::IMREAD_COLOR);
+    //cvtColor(image_color, image_gary, cv::COLOR_BGR2GRAY);
+}
+
+void addGaussianNoise(cv::Mat &image, double mean = 0, double stddev = 20) {
+    cv::Mat noise(image.size(), image.type());
+    cv::randn(noise, mean, stddev); // Генерация шума
+    image += noise; // Добавление шума к изображению
+}
+

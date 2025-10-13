@@ -1,5 +1,5 @@
 #pragma once
-//�������� ������������ ����� �� ������ ���������� Lucas-Kanade Optical Flow
+//Lucas-Kanade Optical Flow
 //
 
 #include "opencv2/video/tracking.hpp"
@@ -31,7 +31,6 @@ using namespace std;
 
 Mat videoStabHomograpy(cuda::GpuMat& gFrame, vector<Point2f>& p0, vector<Point2f>& p1, vector<Mat>& homoTransforms)
 {
-	// ��������� ����������
 	Mat H;
 	if (p0.size() >= 4) {
 		H = findHomography(p0, p1, RANSAC);
@@ -169,4 +168,3 @@ OrientationAngles estimateUAVOrientation(cv::cuda::GpuMat& currentFrame, cv::cud
 //	addP0.clear();
 //	}
 //}
-

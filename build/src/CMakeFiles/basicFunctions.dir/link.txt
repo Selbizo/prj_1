@@ -1,0 +1,1 @@
+/usr/bin/c++ -fPIC -g -shared -Wl,-soname,libbasicFunctions.so -o libbasicFunctions.so CMakeFiles/basicFunctions.dir/basicFunctions.cpp.o 

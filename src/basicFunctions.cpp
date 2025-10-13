@@ -1,107 +1,51 @@
-//Базовые функции
-#pragma once
-
-//OpenCV
-#include <opencv2/core.hpp>          // Mat, Scalar, Size, Rect, Point
-#include <opencv2/imgproc.hpp>       // cvtColor, rectangle, ellipse, putText
-#include <opencv2/highgui.hpp>       // imshow, imwrite
-#include <opencv2/calib3d.hpp>       // findChessboardCorners, calibrateCamera
-#include <opencv2/videoio.hpp>       // VideoCapture
-#include <opencv2/cudaarithm.hpp>    // GpuMat, upload, download
-
-// C++
-#include <vector>    
-#include <iostream>  
-#include <thread>    
-#include <mutex>     
-
+//#include "ConfigVideoStab.h"
+//#include "basicStructs.h"
+#include "basicFunctions.h"
 
 using namespace cv;
 using namespace std;
+//namespace fs = std::filesystem;
 
+// int createFolders(vector <std::string>& folderPath)
+// {
+// 	//Автоматическое создание папок
+// 	//vector <std::string> folderPath(4); 
+// 	folderPath[0] = "./OutputVideos";
+// 	folderPath[1] = "./OutputResults";
+// 	folderPath[2] = "./SourceVideos";
+// 	folderPath[3] = "./SourceVideosAuto";
+//     for (int tmp = 0; tmp < folderPath.size(); tmp++)
+// 	{
+// 		// Проверяем и создаём папку (если нужно)
+// 		if (!fs::exists(folderPath[tmp])) {
+// 			if (!fs::create_directory(folderPath[tmp])) {
+// 				std::cerr << "Failed to create directory!" << std::endl;
+// 				return -1;
+// 			}
+// 		}
+// 	}
+// 	return 0;
+// }
 
-// 
-const double DEG_TO_RAD = CV_PI / 180.0;
-const double RAD_TO_DEG = 180.0 / CV_PI;
-
-Scalar colorRED   (48, 62,  255);
-Scalar colorYELLOW(5,  188, 251);
-Scalar colorGREEN (82, 156,  23);
-Scalar colorBLUE  (239,107,  23);
-Scalar colorPURPLE(180,  0, 180);
-Scalar colorWHITE (255,255, 255);
-Scalar colorBLACK (0,    0,   0);
-
-
-struct TransformParam
+void createPointColors(std::vector<Scalar>& colors, cv::RNG& rng)
 {
-	TransformParam() {}
-	TransformParam(double _dx, double _dy, double _da)
+	for (int i = 0; i < 1000; i++)
 	{
-		dx = _dx;
-		dy = _dy;
-		da = _da;
+		unsigned short b = rng.uniform(120, 255);
+		unsigned short g = rng.uniform( 60, 190);
+		unsigned short r = rng.uniform(165, 225);
+		colors.push_back(Scalar(b, g, r));
 	}
+}
 
-	double dx;
-	double dy;
-	double da; // angle
-
-	const void getTransform(Mat& T, double a, double b, double c, double atan_ba, double crop)
-	{
-		// Reconstruct transformation matrix accordingly to new values
-		T.at<double>(0, 0) = cos(da);
-		T.at<double>(0, 1) = -sin(da);
-		T.at<double>(1, 0) = sin(da);
-		T.at<double>(1, 1) = cos(da);
-		T.at<double>(0, 2) = dx;
-		T.at<double>(1, 2) = dy;
-
-	}
-
-	const void getTransform(Mat& T)
-	{
-		// Reconstruct transformation matrix accordingly to new values
-		T.at<double>(0, 0) = cos(da);
-		T.at<double>(0, 1) = -sin(da);
-		T.at<double>(1, 0) = sin(da);
-		T.at<double>(1, 1) = cos(da);
-		T.at<double>(0, 2) = dx;
-		T.at<double>(1, 2) = dy;
-
-	}
-	
-	const void getTransformInvert(Mat& T, double a, double b, double c, double atan_ba, double crop)
-	{
-		// Reconstruct unverted transformation matrix accordingly to new values
-		T.at<double>(0, 0) = cos(-da);
-		T.at<double>(0, 1) = -sin(-da);
-		T.at<double>(1, 0) = sin(-da);
-		T.at<double>(1, 1) = cos(-da);
-		T.at<double>(0, 2) = -dx;
-		T.at<double>(1, 2) = -dy;
-
-	}
-
-	const void getTransformBoost(Mat& T, const int a, const int b, RNG rng)
-	{
-		T.at<double>(0, 0) = cos(0.0);
-		T.at<double>(0, 1) = -sin(0.0);
-		T.at<double>(1, 0) = sin(0.0);
-		T.at<double>(1, 1) = cos(0.0);
-		T.at<double>(0, 2) = a*atan((dx)*0.4)/4 + rng.uniform(-10, 10);
-		T.at<double>(1, 2) = b*atan((dy)*0.4)/4 + rng.uniform(-10, 10);
-	}
-};
-
-static void download(const cuda::GpuMat& d_mat, vector<Point2f>& vec)
+void download(const cuda::GpuMat& d_mat, vector<Point2f>& vec)
 {
 	vec.resize(d_mat.cols);
 	Mat mat(1, d_mat.cols, CV_32FC2, (void*)&vec[0]);
 	d_mat.download(mat);
 }
 
-static void download(const cuda::GpuMat& d_mat, vector<uchar>& vec)
+void download(const cuda::GpuMat& d_mat, vector<uchar>& vec)
 {
 	vec.resize(d_mat.cols);
 	Mat mat(1, d_mat.cols, CV_8UC1, (void*)&vec[0]);
@@ -405,134 +349,4 @@ void showServiceInfoSmall(Mat& writerFrame, double Q, double nsr, bool wiener, b
 	cv::putText(writerFrame, format("Resolution: %d x %d.", a, b),
 		textOrg[temp_i], fontFace, fontScale, color, 2, 8, false); ++temp_i;
 
-}
-
-//#include <opencv2/opencv.hpp>
-
-class KalmanFilterCV {
-public:
-	KalmanFilterCV(
-		double dt,
-		const cv::Mat& A,
-		const cv::Mat& C,
-		const cv::Mat& Q,
-		const cv::Mat& R,
-		const cv::Mat& P
-	);
-
-	KalmanFilterCV();
-
-	void init();
-
-	void init(double t0, const cv::Mat& x0);
-
-	void update(const cv::Mat& y);
-
-	void update(const cv::Mat& y, double dt, const cv::Mat& A);
-
-	cv::Mat state() { return x_hat; };
-	double time() { return t; };
-
-private:
-	// Matrices for computation
-	cv::Mat A, C, Q, R, P, K, P0;
-
-	// System dimensions
-	int m, n;
-
-	// Initial and current time
-	double t0, t;
-
-	// Discrete time step
-	double dt;
-
-	// Is the filter initialized?
-	bool initialized;
-
-	// n-size identity
-	cv::Mat I;
-
-	// Estimated states
-	cv::Mat x_hat, x_hat_new;
-};
-
-// Implementation
-
-KalmanFilterCV::KalmanFilterCV(
-	double dt,
-	const cv::Mat& A,
-	const cv::Mat& C,
-	const cv::Mat& Q,
-	const cv::Mat& R,
-	const cv::Mat& P
-) : A(A.clone()), C(C.clone()), Q(Q.clone()), R(R.clone()), P(P.clone()),
-dt(dt), initialized(false), t0(0), t(0) {
-
-	m = C.rows;
-	n = A.rows;
-	I = cv::Mat::eye(n, n, CV_64F);
-	x_hat = cv::Mat::zeros(n, 1, CV_64F);
-	x_hat_new = cv::Mat::zeros(n, 1, CV_64F);
-	P0 = P.clone();
-}
-
-KalmanFilterCV::KalmanFilterCV() : initialized(false), t0(0), t(0), dt(0), m(0), n(0) {}
-
-void KalmanFilterCV::init() {
-	x_hat.setTo(0);
-	P = P0.clone();
-	t = t0;
-	initialized = true;
-}
-
-void KalmanFilterCV::init(double t0, const cv::Mat& x0) {
-	this->t0 = t0;
-	t = t0;
-	x0.copyTo(x_hat);
-	P = P0.clone();
-	initialized = true;
-}
-
-void KalmanFilterCV::update(const cv::Mat& y) {
-	if (!initialized) {
-		throw std::runtime_error("Filter is not initialized!");
-	}
-
-	// Prediction step
-	x_hat_new = A * x_hat;
-	P = A * P * A.t() + Q;
-
-	// Correction step
-	K = P * C.t() * (C * P * C.t() + R).inv();
-	x_hat_new += K * (y - C * x_hat_new);
-	P = (I - K * C) * P;
-
-	// Update state
-	x_hat_new.copyTo(x_hat);
-	t += dt;
-}
-
-void KalmanFilterCV::update(const cv::Mat& y, double dt, const cv::Mat& A) {
-	this->dt = dt;
-	A.copyTo(this->A);
-	update(y);
-}
-
-// Функция для удаления пробелов в начале и конце строки
-string trim(const string &str) {
-    size_t start = str.find_first_not_of(" \t");
-    if (start == string::npos) return "";
-    size_t end = str.find_last_not_of(" \t");
-    return str.substr(start, end - start + 1);
-}
-
-
-void loadImage(cv::Mat& image_color, int frame_id, std::string filepath){
-    char file[200];
-    sprintf(file, "image_0/%06d.png", frame_id);
-
-    // sprintf(file, "image_0/%010d.png", frame_id);
-    std::string filename = filepath + std::string(file);
-    image_color = cv::imread(filename, cv::IMREAD_COLOR);
-    //cvtColor(image_color, image_gary, cv::COLOR_BGR2GRAY);
 }

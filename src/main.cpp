@@ -1,9 +1,9 @@
 //Алгоритм стабилизации видео на основе вычисление Lucas-Kanade Optical Flow
 
-#include "Config.hpp"
-#include "basicFunctions.hpp"
-#include "stabilizationFunctions.hpp"
-#include "wienerFilter.hpp"
+#include "basicFunctions.h"
+#include "stabilizationFunctions.h"
+#include "wienerFilter.h"
+
 #include <filesystem>
 
 using namespace cv;
@@ -15,48 +15,48 @@ namespace fs = std::filesystem;
 
 #define Ntap 31
 
-TransformParam iirNoise(TransformParam &NewSample,vector<TransformParam>& x, vector<TransformParam>& y) {
+// TransformParam iirNoise(TransformParam &NewSample,vector<TransformParam>& x, vector<TransformParam>& y) {
    
-   double FIRCoef[Ntap] = {
-         -40, -16, 28, 48, 21, -31, -56, -25, 33, 62, 29, -34, -66, -32, 34, 68, 34, -32, -66, -34, 29, 62, 33, -25, -56,-31, 21, 48, 28, -16, -40
-   };
+//    double FIRCoef[Ntap] = {
+//          -40, -16, 28, 48, 21, -31, -56, -25, 33, 62, 29, -34, -66, -32, 34, 68, 34, -32, -66, -34, 29, 62, 33, -25, -56,-31, 21, 48, 28, -16, -40
+//    };
    
-   double ACoef[NCoef+1] = {
-          12, 0, -60, 0, 120, 0, -120, 0, 60, 0, -12
-   };
+//    double ACoef[NCoef+1] = {
+//           12, 0, -60, 0, 120, 0, -120, 0, 60, 0, -12
+//    };
 
-   double BCoef[NCoef+1] = {
-          64, -70, 30, -16, 29, -17, 5, -1, 1, 0, 0
-   };
+//    double BCoef[NCoef+1] = {
+//           64, -70, 30, -16, 29, -17, 5, -1, 1, 0, 0
+//    };
 
-   int n;
+//    int n;
 
-   //shift the old samples
-   for(n=NCoef; n>0; n--) {
-      x[n] = x[n-1];
-      y[n] = y[n-1];
-   }
+//    //shift the old samples
+//    for(n=NCoef; n>0; n--) {
+//       x[n] = x[n-1];
+//       y[n] = y[n-1];
+//    }
 
-   //Calculate the new output
-   x[0] = NewSample;
-   y[0].dx = ACoef[0] * x[0].dx;
-   y[0].dy = ACoef[0] * x[0].dy;
-   y[0].da = ACoef[0] * x[0].da;
+//    //Calculate the new output
+//    x[0] = NewSample;
+//    y[0].dx = ACoef[0] * x[0].dx;
+//    y[0].dy = ACoef[0] * x[0].dy;
+//    y[0].da = ACoef[0] * x[0].da;
 
-   for (n = 1; n <= NCoef; n++)
-   {
-       y[0].dx += ACoef[n] * x[n].dx - BCoef[n] * y[n].dx;
-       y[0].dy += ACoef[n] * x[n].dy - BCoef[n] * y[n].dy;
-       y[0].da += ACoef[n] * x[n].da - BCoef[n] * y[n].da;
+//    for (n = 1; n <= NCoef; n++)
+//    {
+//        y[0].dx += ACoef[n] * x[n].dx - BCoef[n] * y[n].dx;
+//        y[0].dy += ACoef[n] * x[n].dy - BCoef[n] * y[n].dy;
+//        y[0].da += ACoef[n] * x[n].da - BCoef[n] * y[n].da;
 
-   }
+//    }
 
-   y[0].dy /= (BCoef[0]*DCgain);
-   y[0].da /= (BCoef[0]*DCgain);
-   y[0].dx /= (BCoef[0]*DCgain);
+//    y[0].dy /= (BCoef[0]*DCgain);
+//    y[0].da /= (BCoef[0]*DCgain);
+//    y[0].dx /= (BCoef[0]*DCgain);
 
-   return y[0];
-}
+//    return y[0];
+// }
 
 
 

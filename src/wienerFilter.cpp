@@ -1,17 +1,4 @@
-//здесь представлены функции, отвечающие за Винеровскую фильтрацию
-#pragma once
-
-#include <opencv2/core.hpp>          // Базовые структуры (Mat, Scalar)
-#include <opencv2/imgproc.hpp>       // Операции с изображениями (ellipse, normalize)
-#include <opencv2/highgui.hpp>       // imshow
-#include <opencv2/core/cuda.hpp>     // CUDA-функционал (GpuMat)
-#include <opencv2/cudaarithm.hpp>    // CUDA-арифметика (sum, divide)
-#include <opencv2/cudaimgproc.hpp>   // CUDA-операции с изображениями
-
-// Стандартные заголовки C++
-#include <vector>    // std::vector
-#include <iostream>  // std::cout
-#include <thread>	 //std::thread
+#include "wienerFilter.h"
 
 using namespace cv;
 using namespace std;
@@ -128,22 +115,22 @@ void edgetaper(const Mat& inputImg, Mat& outputImg, double gamma, double beta)
 
 void GcalcPSF(cuda::GpuMat& outputImg, Size filterSize, Size psfSize, double len, double theta)
 {
-	// Создаем GpuMat для временного хранения
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ GpuMat пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	int scale = 8;
 	cuda::GpuMat h(filterSize, CV_32F, Scalar(0));
 	Mat hCpu(psfSize, CV_32F, Scalar(0));
 	Mat hCpuBig(Size(psfSize.width * scale, psfSize.height * scale), CV_32F, Scalar(0));
-	// Центр эллипса
+	// пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	Point center(psfSize.width * scale / 2, psfSize.height * scale / 2);
 
-	// Радиусы эллипса
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	Size axes(scale, cvRound(double(len * scale + scale) / 2.0f));
 	Size axes2(scale, cvRound(double(len * scale + scale) / 4.0f));
 	Size axes3(scale, cvRound(double(len * scale + scale) / 6.0f));
-	// Углы поворота эллипса
+	// пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	double angle = 90.0 - theta;
 
-	// Рисуем эллипс на GpuMat
+	// пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ GpuMat
 
 	ellipse(hCpuBig, center, axes, angle, 0, 360, Scalar(0.2), FILLED);
 
@@ -155,7 +142,7 @@ void GcalcPSF(cuda::GpuMat& outputImg, Size filterSize, Size psfSize, double len
 	if (hCpu.rows > h.rows / 2)
 		resize(hCpu, hCpu, Size(hCpu.cols, h.rows / 2 - 1), INTER_LINEAR);
 	// 
-		// Копируем часть исходного кадра в большой кадр
+		// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅ
 	imshow("PSF Cpu", hCpu);
 	//hCpu(Rect(0, 0, psfSize.width, psfSize.height)).copyTo(h(Rect((filterSize.width - psfSize.width) / 2, (filterSize.height - psfSize.height) / 2, psfSize.width, psfSize.height)));
 	hCpu(Rect(0, 0, hCpu.cols, hCpu.rows)).copyTo(h(Rect((filterSize.width - hCpu.cols) / 2, (filterSize.height - hCpu.rows) / 2, hCpu.cols, hCpu.rows)));
@@ -164,10 +151,10 @@ void GcalcPSF(cuda::GpuMat& outputImg, Size filterSize, Size psfSize, double len
 
 
 
-	// Суммируем все элементы GpuMat
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ GpuMat
 	Scalar summa = cuda::sum(h);
 
-	// Делим GpuMat на сумму
+	// пїЅпїЅпїЅпїЅпїЅ GpuMat пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	cuda::divide(h, Scalar(summa[0]), outputImg);
 
 
@@ -175,29 +162,29 @@ void GcalcPSF(cuda::GpuMat& outputImg, Size filterSize, Size psfSize, double len
 
 void GcalcPSFCircle(cuda::GpuMat& outputImg, Size filterSize, double len, double theta)
 {
-	// Создаем GpuMat для временного хранения
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ GpuMat пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	cuda::GpuMat h(filterSize, CV_32F, Scalar(0));
 	Mat hCpu(filterSize, CV_32F, Scalar(0));
-	// Центр эллипса
+	// пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	Point center(filterSize.width / 2, filterSize.height / 2);
 
-	// Радиусы эллипса
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	Size axes(cvRound(double(len) / 2.0), cvRound(double(len) / 2.0));
 	Size axes2(0, cvRound(double(len) / 4.0f));
-	// Углы поворота эллипса
+	// пїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	double angle = 90.0 - theta;
 
-	// Рисуем эллипс на GpuMat
+	// пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ GpuMat
 
 	ellipse(hCpu, center, axes, angle, 0, 360, Scalar(255), FILLED);
 	//ellipse(hCpu, center, axes2, angle, 0, 360, Scalar(255), FILLED);
 	blur(hCpu, hCpu, Size(5, 5));
 	h.upload(hCpu);
 
-	// Суммируем все элементы GpuMat
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ GpuMat
 	Scalar summa = cuda::sum(h);
 
-	// Делим GpuMat на сумму
+	// пїЅпїЅпїЅпїЅпїЅ GpuMat пїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	cuda::divide(h, Scalar(summa[0]), outputImg);
 }
 
@@ -221,114 +208,114 @@ void Gfftshift(const cuda::GpuMat& inputImg, cuda::GpuMat& outputImg)
 
 void Gfilter2DFreq(const cuda::GpuMat& inputImg, cuda::GpuMat& outputImg, const cuda::GpuMat& H)
 {
-	// Клонируем входное изображение
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	cuda::GpuMat inputClone;
 	inputImg.copyTo(inputClone);
 
-	// Создаем GpuMat для мнимой части
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ GpuMat пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	cuda::GpuMat zeroMat(inputImg.size(), CV_32F, Scalar(0));
 
-	// Объединяем действительную и мнимую часть в комплексную матрицу
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	vector<cuda::GpuMat> planes = { inputClone, zeroMat };
 	cuda::GpuMat complexInput;
 	cuda::merge(planes, complexInput);
 
-	// Прямое преобразование Фурье
+	// пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	//cuda::dft(complexInput, complexInput, complexInput.size(), DFT_SCALE | DFT_COMPLEX_OUTPUT);
 	cuda::dft(complexInput, complexInput, complexInput.size(), DFT_SCALE);
 
-	// Клонируем фильтр
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ
 	cuda::GpuMat HClone;
 	H.copyTo(HClone);
 
-	// Создаем GpuMat для мнимой части фильтра
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ GpuMat пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	cuda::GpuMat zeroMatH(H.size(), CV_32F, Scalar(0));
 
-	// Объединяем действительную и мнимую часть фильтра в комплексную матрицу
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	vector<cuda::GpuMat> planesH = { HClone, zeroMatH };
 	cuda::GpuMat complexH;
 	cuda::merge(planesH, complexH);
 
-	// Умножение спектров
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	cuda::GpuMat complexOutput;
 	cuda::mulSpectrums(complexInput, complexH, complexOutput, 0);
 
-	// Обратное преобразование Фурье
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	cuda::dft(complexOutput, complexOutput, complexOutput.size(), DFT_INVERSE);
 
-	// Разделяем комплексную матрицу на две части
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	vector<cuda::GpuMat> planesOut;
 	cuda::split(complexOutput, planesOut);
 
-	// Первый компонент является результатом фильтрации
+	// пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	outputImg = planesOut[0];
 }
 
 void Gfilter2DFreqV2(const cuda::GpuMat& inputImg, cuda::GpuMat& outputImg, const cuda::GpuMat& complexH, Ptr<cuda::DFT>& forwardDFT, Ptr<cuda::DFT>& inverseDFT)
 {
-	// Клонируем входное изображение
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	//cuda::GpuMat inputClone;
 	//inputImg.copyTo(inputClone);
 
-	// Создаем GpuMat для мнимой части
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ GpuMat пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	cuda::GpuMat zeroMat(inputImg.size(), CV_32F, Scalar(0));
 
-	// Объединяем действительную и мнимую часть в комплексную матрицу
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	vector<cuda::GpuMat> planes = { inputImg, zeroMat };
 	cuda::GpuMat complexInput;
 	cuda::merge(planes, complexInput);
 
-	// Прямое преобразование Фурье
+	// пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 
 	forwardDFT->compute(complexInput, complexInput);
-	// Умножение спектров
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	cuda::GpuMat complexOutput;
 	cuda::mulSpectrums(complexInput, complexH, complexOutput, 0);
-	// Обратное преобразование Фурье
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	inverseDFT->compute(complexOutput, complexOutput);
 
-	// Разделяем комплексную матрицу на две части
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	vector<cuda::GpuMat> planesOut;
 	cuda::split(complexOutput, planesOut);
 
-	// Первый компонент является результатом фильтрации
+	// пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	outputImg = planesOut[0];
 }
 
 void GcalcWnrFilter(const cuda::GpuMat& input_h_PSF, cuda::GpuMat& output_G, double nsr)
 {
-	// Создаем копию входного изображения
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	//cuda::GpuMat h_PSF_clone;
 	//input_h_PSF.copyTo(h_PSF_clone);
 
-	// Применяем сдвиг Фурье
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	cuda::GpuMat h_PSF_shifted;
 	Gfftshift(input_h_PSF, h_PSF_shifted);
 
-	// Создаем GpuMat для мнимой части
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ GpuMat пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	cuda::GpuMat zeroMat(h_PSF_shifted.size(), CV_32F, Scalar(0));
 
-	// Объединяем действительную и мнимую часть в комплексную матрицу
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ пїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	vector<cuda::GpuMat> planes = { h_PSF_shifted, zeroMat };
 	cuda::GpuMat complexI;
 	cuda::merge(planes, complexI);
 
-	// Прямое преобразование Фурье
+	// пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	//cuda::dft(complexI, complexI, complexI.size(), DFT_COMPLEX_OUTPUT);
 	cuda::dft(complexI, complexI, complexI.size());
 
-	// Разделяем комплексную матрицу на две части
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅ
 	vector<cuda::GpuMat> planesOut;
 	cuda::split(complexI, planesOut);
 
-	// Вычисляем знаменатель
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	cuda::GpuMat denom;
 	cuda::magnitude(planesOut[0], planesOut[1], denom);
 	cuda::pow(denom, 2, denom);
 	//denom += nsr;
 	cuda::add(denom, nsr, denom);
 
-	// Деление
+	// пїЅпїЅпїЅпїЅпїЅпїЅпїЅ
 	cuda::divide(planesOut[0], denom, output_G);
 }
 
