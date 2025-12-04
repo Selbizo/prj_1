@@ -1,3 +1,4 @@
+#banana PI config
 add_library(basicFunctions SHARED "basicFunctions.cpp")
 add_library(stabilizationFunctions SHARED "stabilizationFunctions.cpp")
 add_library(wienerFilter SHARED "wienerFilter.cpp")
