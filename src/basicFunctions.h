@@ -1,11 +1,5 @@
 #pragma once
-// //OpenCV
-// #include <opencv2/core.hpp>          // Mat, Scalar, Size, Rect, Point
-// #include <opencv2/imgproc.hpp>       // cvtColor, rectangle, ellipse, putText
-// #include <opencv2/highgui.hpp>       // imshow, imwrite
-// #include <opencv2/calib3d.hpp>       // findChessboardCorners, calibrateCamera
-// #include <opencv2/videoio.hpp>       // VideoCapture
-// #include <opencv2/cudaarithm.hpp>    // GpuMat, upload, download
+
 
 
 #include "opencv2/core.hpp"          // Mat, Scalar, Size, Rect, Point
@@ -13,7 +7,6 @@
 #include "opencv2/highgui.hpp"       // imshow, imwrite
 #include "opencv2/calib3d.hpp"       // findChessboardCorners, calibrateCamera
 #include "opencv2/videoio.hpp"       // VideoCapture
-#include "opencv2/cudaarithm.hpp"    // GpuMat, upload, download
 
 // C++
 #include <vector>    
@@ -26,23 +19,14 @@
 
 using namespace cv;
 using namespace std;
-//namespace fs = std::filesystem;
-
-
-
-
-//int createFolders(vector <std::string>& folderPath);
 
 void createPointColors(std::vector<Scalar>& colors, cv::RNG& rng);
 
-
-void download(const cuda::GpuMat& d_mat, vector<Point2f>& vec);
-
-void download(const cuda::GpuMat& d_mat, vector<uchar>& vec);
+void convertVectorToUMat(const vector<Point2f>& p0, UMat& uP0);
 
 int camera_calibration(int argc, char** argv);
 
-bool keyResponse(int& keyboard, Mat& frame, Mat& croppedImg, Mat& crossRef, cuda::GpuMat gCrossRef,
+bool keyResponse(int& keyboard, Mat& frame, Mat& croppedImg, Mat& crossRef, UMat gCrossRef,
 	const double& a, const double& b, double& nsr, bool& wiener, bool& threadwiener, double& Q,
 	double& tauStab, double& framePart, Rect& roi);
 

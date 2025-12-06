@@ -1,31 +1,8 @@
-//#include "ConfigVideoStab.h"
-//#include "basicStructs.h"
 #include "basicFunctions.h"
 
 using namespace cv;
 using namespace std;
-//namespace fs = std::filesystem;
 
-// int createFolders(vector <std::string>& folderPath)
-// {
-// 	//Автоматическое создание папок
-// 	//vector <std::string> folderPath(4); 
-// 	folderPath[0] = "./OutputVideos";
-// 	folderPath[1] = "./OutputResults";
-// 	folderPath[2] = "./SourceVideos";
-// 	folderPath[3] = "./SourceVideosAuto";
-//     for (int tmp = 0; tmp < folderPath.size(); tmp++)
-// 	{
-// 		// Проверяем и создаём папку (если нужно)
-// 		if (!fs::exists(folderPath[tmp])) {
-// 			if (!fs::create_directory(folderPath[tmp])) {
-// 				std::cerr << "Failed to create directory!" << std::endl;
-// 				return -1;
-// 			}
-// 		}
-// 	}
-// 	return 0;
-// }
 
 void createPointColors(std::vector<Scalar>& colors, cv::RNG& rng)
 {
@@ -38,18 +15,24 @@ void createPointColors(std::vector<Scalar>& colors, cv::RNG& rng)
 	}
 }
 
-void download(const cuda::GpuMat& d_mat, vector<Point2f>& vec)
-{
-	vec.resize(d_mat.cols);
-	Mat mat(1, d_mat.cols, CV_32FC2, (void*)&vec[0]);
-	d_mat.download(mat);
-}
-
-void download(const cuda::GpuMat& d_mat, vector<uchar>& vec)
-{
-	vec.resize(d_mat.cols);
-	Mat mat(1, d_mat.cols, CV_8UC1, (void*)&vec[0]);
-	d_mat.download(mat);
+void convertVectorToUMat(const vector<Point2f>& p0, UMat& uP0) {
+    // Проверяем размер исходного вектора
+    int nPoints = static_cast<int>(p0.size());
+    
+    if(nPoints > 0){
+        // Конвертируем вектор в Mat
+        Mat matPoints(nPoints, 1, CV_32FC2);
+        
+        // Копируем точки из std::vector<Point2f> в матрицу
+        for(int i=0; i<nPoints; ++i){
+            Point2f point = p0[i];
+            matPoints.at<Vec2f>(i)[0] = point.x;
+            matPoints.at<Vec2f>(i)[1] = point.y;
+        }
+        
+        // Передаем данные в UMat
+        matPoints.copyTo(uP0);
+    }
 }
 
 int camera_calibration(int argc, char** argv) {
@@ -164,7 +147,7 @@ int camera_calibration(int argc, char** argv) {
 	return 0;
 }
 
-bool keyResponse(int& keyboard, Mat& frame, Mat& croppedImg, Mat& crossRef, cuda::GpuMat gCrossRef,
+bool keyResponse(int& keyboard, Mat& frame, Mat& croppedImg, Mat& crossRef, UMat gCrossRef,
 	const double& a, const double& b, double& nsr, bool& wiener, bool& threadwiener, double& Q,
 	double& tauStab, double& framePart, Rect& roi)
 {
@@ -233,7 +216,7 @@ bool keyResponse(int& keyboard, Mat& frame, Mat& croppedImg, Mat& crossRef, cuda
 			cv::rectangle(crossRef, roi, colorGREEN, 2); //    
 			cv::ellipse(crossRef, cv::Point2f(a / 2, b / 2), cv::Size(a * framePart / 8, 0), 0.0, 0, 360, colorRED, 2);
 			cv::ellipse(crossRef, cv::Point2f(a / 2, b / 2), cv::Size(0, b * framePart / 8), 0.0, 0, 360, colorRED, 2);
-			gCrossRef.upload(crossRef);
+			gCrossRef.copyTo(crossRef);
 		}
 	}
 	if (keyboard == 'w' || keyboard == 'W')
@@ -254,7 +237,7 @@ bool keyResponse(int& keyboard, Mat& frame, Mat& croppedImg, Mat& crossRef, cuda
 			cv::rectangle(crossRef, roi, colorGREEN, 2); //    
 			cv::ellipse(crossRef, cv::Point2f(a / 2, b / 2), cv::Size(a * framePart / 8, 0), 0.0, 0, 360, colorRED, 2);
 			cv::ellipse(crossRef, cv::Point2f(a / 2, b / 2), cv::Size(0, b * framePart / 8), 0.0, 0, 360, colorRED, 2);
-			gCrossRef.upload(crossRef);
+			gCrossRef.copyTo(crossRef);
 		}
 	}
 	return false;

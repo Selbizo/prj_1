@@ -6,7 +6,7 @@
 #include "opencv2/calib3d.hpp"       // findChessboardCorners, calibrateCamera
 #include "opencv2/videoio.hpp"       // VideoCapture
 
-#include <opencv2/cudaarithm.hpp>    // GpuMat, upload, download
+//#include <opencv2/cudaarithm.hpp>    // GpuMat, upload, download
 
 // C++
 #include <vector>    

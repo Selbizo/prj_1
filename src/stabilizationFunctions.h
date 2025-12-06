@@ -9,10 +9,10 @@
 #include <opencv2/videoio.hpp>       
 #include <opencv2/core/cuda.hpp>
 
-#include <opencv2/cudaarithm.hpp>    
-#include <opencv2/cudaimgproc.hpp>   
-#include <opencv2/cudaoptflow.hpp> 
-#include <opencv2/cudawarping.hpp>
+// #include <opencv2/cudaarithm.hpp>    
+// #include <opencv2/cudaimgproc.hpp>   
+// #include <opencv2/cudaoptflow.hpp> 
+// #include <opencv2/cudawarping.hpp>
 
 #include <vector>    // std::vector
 #include <iostream>  // std::cout
@@ -23,30 +23,22 @@
 using namespace cv;
 using namespace std;
 
-void createDetectors(Ptr<cuda::CornersDetector>& d_features, Ptr<cuda::CornersDetector>& d_features_small,
-			Ptr<cuda::SparsePyrLKOpticalFlow>& d_pyrLK_sparse);
+void createDetectors(Ptr<FeatureDetector>& detector, Ptr<FeatureDetector>& detector_small,
+    Ptr<FeatureDetector>& detector_extra);
 
+void initFirstFrame(bool cameraInUse, VideoCapture& capture, string filepath, 
+    int frame_id, Mat& oldFrame, UMat& uOldFrame, UMat& uOldCompressed, 
+    UMat& uOldGray, UMat& uP0, vector<Point2f>& p0,
+    double& qualityLevel, double& harrisK, int& maxCorners, 
+    Ptr<FeatureDetector>& detector, vector<TransformParam>& transforms,
+    double& kSwitch, const int a, const int b, const int compression, 
+    UMat& mask_device, bool& stab_possible);
 
-
-void initFirstFrame(bool cameraInUse, VideoCapture& capture, string filepath, int frame_id, Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldCompressed, cuda::GpuMat& gOldGray,
-	cuda::GpuMat& gP0, vector<Point2f>& p0,
-	double& qualityLevel, double& harrisK, int& maxCorners, Ptr<cuda::CornersDetector>& d_features, vector <TransformParam>& transforms,
-	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible);
-
-void initFirstFrame(VideoCapture& capture, Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldCompressed, cuda::GpuMat& gOldGray,
-	cuda::GpuMat& gP0, vector<Point2f>& p0,
-	double& qualityLevel, double& harrisK, int& maxCorners, Ptr<cuda::CornersDetector>& d_features, vector <TransformParam>& transforms,
-	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible);
-
-void initFirstFrame(cuda::GpuMat& gOldGray,
-	cuda::GpuMat& gP0, vector<Point2f>& p0,
-	double& qualityLevel, double& harrisK, int& maxCorners, Ptr<cuda::CornersDetector>& d_features, vector <TransformParam>& transforms,
-	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible);
-
-   void initFirstFrameZero(Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldGray,
-	cuda::GpuMat& gOldCompressed, cuda::GpuMat& gP0, vector<Point2f>& p0,
-	double& qualityLevel, double& harrisK, int& maxCorners, Ptr<cuda::CornersDetector>& d_features, vector <TransformParam>& transforms,
-	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible);
+void initFirstFrame(UMat& uOldGray, UMat& uP0, vector<Point2f>& p0,
+    double& qualityLevel, double& harrisK, int& maxCorners, 
+    Ptr<FeatureDetector>& detector, vector<TransformParam>& transforms,
+    double& kSwitch, const int a, const int b, const int compression, 
+    UMat& mask_device, bool& stab_possible);
 
 void getBiasAndRotation(vector<Point2f>& p0, vector<Point2f>& p1, Point2f& d,
 	vector <TransformParam>& transforms, Mat& T, const int compression);
@@ -55,25 +47,21 @@ void iir(vector<TransformParam>& transforms, double& tau_stab, Rect& roi, Mat& f
 
 
 
-
-void initFirstFrame(VideoCapture& capture, Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldCompressed, cuda::GpuMat& gOldGray,
-	cuda::GpuMat& gP0, vector<Point2f>& p0,
-	double& qualityLevel, double& harrisK, int& maxCorners, Ptr<cuda::CornersDetector>& d_features, vector <TransformParam>& transforms,
-	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible);
-
-void initFirstFrameZero(Mat& oldFrame, cuda::GpuMat& gOldFrame, cuda::GpuMat& gOldGray,
-	cuda::GpuMat& gOldCompressed, cuda::GpuMat& gP0, vector<Point2f>& p0,
-	double& qualityLevel, double& harrisK, int& maxCorners, Ptr<cuda::CornersDetector>& d_features, vector <TransformParam>& transforms,
-	double& kSwitch, const int a, const int b, const int compression, cuda::GpuMat& mask_device, bool& stab_possible);
+void initFirstFrameZero(Mat& oldFrame, UMat& uOldFrame, UMat& uOldGray,
+    UMat& uOldCompressed, UMat& uP0, vector<Point2f>& p0,
+    double& qualityLevel, double& harrisK, int& maxCorners, 
+    Ptr<FeatureDetector>& detector, vector<TransformParam>& transforms,
+    double& kSwitch, const int a, const int b, const int compression, 
+    UMat& mask_device, bool& stab_possible);
 
 void getBiasAndRotation(vector<Point2f>& p0, vector<Point2f>& p1, Point2f& d, Point2f& meanP0,
 	vector <TransformParam>& transforms, Mat& T, const int compression);
 
-void addFramePoints(cuda::GpuMat& gOldGray, vector<Point2f>& p0,
-	Ptr<cuda::CornersDetector>& d_features, cuda::GpuMat& gMaskSearchSmall);
+void addFramePoints(UMat& uOldGray, vector<Point2f>& p0,
+    Ptr<FeatureDetector>& detector, UMat& uMaskSearchSmall);
 
-void addFramePoints(cuda::GpuMat& gOldGray, vector<Point2f>& p0,
-	Ptr<cuda::CornersDetector>& d_features);
+void addFramePoints(UMat& uOldGray, vector<Point2f>& p0,
+    Ptr<FeatureDetector>& detector);
 
 void removeFramePoints(vector<Point2f>& p0, double minDistance);
 
