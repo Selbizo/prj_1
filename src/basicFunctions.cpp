@@ -147,7 +147,7 @@ int camera_calibration(int argc, char** argv) {
 	return 0;
 }
 
-bool keyResponse(int& keyboard, Mat& frame, Mat& croppedImg, Mat& crossRef, UMat gCrossRef,
+bool keyResponse(int& keyboard, Mat& frame, Mat& croppedImg, Mat& crossRef, UMat uCrossRef,
 	const double& a, const double& b, double& nsr, bool& wiener, bool& threadwiener, double& Q,
 	double& tauStab, double& framePart, Rect& roi)
 {
@@ -216,7 +216,7 @@ bool keyResponse(int& keyboard, Mat& frame, Mat& croppedImg, Mat& crossRef, UMat
 			cv::rectangle(crossRef, roi, colorGREEN, 2); //    
 			cv::ellipse(crossRef, cv::Point2f(a / 2, b / 2), cv::Size(a * framePart / 8, 0), 0.0, 0, 360, colorRED, 2);
 			cv::ellipse(crossRef, cv::Point2f(a / 2, b / 2), cv::Size(0, b * framePart / 8), 0.0, 0, 360, colorRED, 2);
-			gCrossRef.copyTo(crossRef);
+			crossRef.copyTo(uCrossRef);
 		}
 	}
 	if (keyboard == 'w' || keyboard == 'W')
@@ -237,7 +237,7 @@ bool keyResponse(int& keyboard, Mat& frame, Mat& croppedImg, Mat& crossRef, UMat
 			cv::rectangle(crossRef, roi, colorGREEN, 2); //    
 			cv::ellipse(crossRef, cv::Point2f(a / 2, b / 2), cv::Size(a * framePart / 8, 0), 0.0, 0, 360, colorRED, 2);
 			cv::ellipse(crossRef, cv::Point2f(a / 2, b / 2), cv::Size(0, b * framePart / 8), 0.0, 0, 360, colorRED, 2);
-			gCrossRef.copyTo(crossRef);
+			crossRef.copyTo(uCrossRef);
 		}
 	}
 	return false;

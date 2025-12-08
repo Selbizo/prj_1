@@ -1,6 +1,6 @@
 #include "basicFunctions.h"
 #include "stabilizationFunctions.h"
-#include "wienerFilter.h"
+//#include "wienerFilter.h"
 
 using namespace cv;
 using namespace std;
@@ -35,7 +35,7 @@ void checkUmatFrames_(UMat uOldGray, UMat uGray)
 
 int main()
 {
-	int outputResolution = 1920;
+	int outputResolution = 1000;
 	TransformParam noiseIn = { 0.0, 0.0, 0.0 };
 	vector <TransformParam> noiseOut(2);
 	for (int i = 0; i < noiseOut.size();i++)
@@ -181,7 +181,7 @@ int main()
 	clock_t endGPUPing = clock();
 
 	// Захват первого кадра
-	VideoCapture capture("http://192.168.0.102:4747/video?640x480");
+	VideoCapture capture(videoSource);
 	if (cameraInUse)
 	{
 		if (!capture.isOpened()) {
@@ -244,22 +244,22 @@ int main()
 
 	// Для отображения надписей
 	int fontFace = FONT_HERSHEY_SIMPLEX;
-	double fontScale = 1.0;
+	double fontScale = 0.9;
 	setlocale(LC_ALL, "RU");
 
 	vector<Point> textOrg(20), textOrgCrop(20), textOrgStab(20), textOrgOrig(20);
-	if (writeVideo)
+	if (multiScreen)
 	{ 
 		for (int i = 0; i < 20; i++)
 		{
 			textOrg[i].x = 5 + a;
-			textOrg[i].y = 5 + 50*fontScale*(i+1) + b;
+			textOrg[i].y = 5 + 30*fontScale*(i+1) + b;
 			textOrgCrop[i].x = 5;
-			textOrgCrop[i].y = 5 + 50*fontScale*(i+1) + b;
+			textOrgCrop[i].y = 5 + 30*fontScale*(i+1) + b;
 			textOrgStab[i].x = 5;
-			textOrgStab[i].y = 5 + 50*fontScale*(i+1);
+			textOrgStab[i].y = 5 + 30*fontScale*(i+1);
 			textOrgOrig[i].x = 5 + a;
-			textOrgOrig[i].y = 5 + 50*fontScale*(i+1);
+			textOrgOrig[i].y = 5 + 30*fontScale*(i+1);
 		}
 	}
 	else {
@@ -300,7 +300,7 @@ int main()
 		writerFrameSmall(oldFrame.rows, oldFrame.cols, CV_8UC3),
 		writerFrameToShow;
 
-	if (writeVideo) {
+	if (recordEnable) {
 		bool isColor = (oldFrame.type() == CV_8UC3);
 		int codec = VideoWriter::fourcc('a', 'v', 'c', '1');
 		double fps = 30.0; 
@@ -333,9 +333,7 @@ int main()
 	for(int frameCount = init_frame_id + 1; frameCount < 4500; frameCount++){
 		secondsFullPing = 0.96*secondsFullPing + 0.04*(double)(endFullPing-startFullPing)/CLOCKS_PER_SEC;
 		startFullPing = clock();
-
 		secondsGPUPing = 0.96*secondsGPUPing + 0.04*(double)(endGPUPing-startGPUPing)/CLOCKS_PER_SEC;
-		//checkUmatFrames(uOldGray, uGray);
 		if (stabPossible) {
 			good_new.clear();
 			for (uint i = 0; i < p1.size(); ++i)
@@ -377,13 +375,13 @@ int main()
 			if(cameraInUse) capture >> frame;
 			else loadImage(frame, frameCount, filepath);
 
-			noiseIn.dx = (double)(rng.uniform(-100.0, 100.0))/4;
-       		noiseIn.dy = (double)(rng.uniform(-100.0, 100.0))/4;
-       		noiseIn.da = (double)(rng.uniform(-1000.0, 1000.0)*0.0001)/8;
+			// noiseIn.dx = (double)(rng.uniform(-5.0, 5.0))/4;
+       		// noiseIn.dy = (double)(rng.uniform(-5.0, 5.0))/4;
+       		// noiseIn.da = (double)(rng.uniform(-100.0, 100.0)*0.0001)/8;
 
-       		noiseOut[0] = iirNoise(noiseIn, X, Y);
-    		noiseOut[0].getTransform(TShake);
-    		cv::warpAffine(frame, frame, TShake, frame.size());
+       		// noiseOut[0] = iirNoise(noiseIn, X, Y);
+    		// noiseOut[0].getTransform(TShake);
+    		// cv::warpAffine(frame, frame, TShake, frame.size());
 		}
 
 		if (frameCnt % 128 == 1)
@@ -400,7 +398,7 @@ int main()
 			capture >> frame;
 		}
 
-		if (writeVideo && stabPossible) writerFrame.setTo(colorBLACK);
+		if ((multiScreen || recordEnable) && stabPossible) writerFrame.setTo(colorBLACK);
 		frameCnt++;
 
 		startGPUPing = clock();
@@ -425,13 +423,13 @@ int main()
 			if(cameraInUse) capture >> frame;
 			else loadImage(frame, frameCount, filepath);
 			
-			noiseIn.dx = (double)(rng.uniform(-5.0, 5.0));
-       		noiseIn.dy = (double)(rng.uniform(-5.0, 5.0));
-       		noiseIn.da = (double)(rng.uniform(-0.05, 0.05));
+			// noiseIn.dx = (double)(rng.uniform(-5.0, 5.0));
+       		// noiseIn.dy = (double)(rng.uniform(-5.0, 5.0));
+       		// noiseIn.da = (double)(rng.uniform(-0.05, 0.05));
 
-       		noiseOut[0] = iirNoise(noiseIn, X, Y);
-    		noiseOut[0].getTransform(TShake);
-    		cv::warpAffine(frame, frame, TShake, frame.size());
+       		// noiseOut[0] = iirNoise(noiseIn, X, Y);
+    		// noiseOut[0].getTransform(TShake);
+    		// cv::warpAffine(frame, frame, TShake, frame.size());
 
 			if (!stabPossible) {
 				cv::rectangle(writerFrame, Rect(a, b, a, b), cv::Scalar(0,0,0), cv::FILLED);
@@ -460,19 +458,6 @@ int main()
 			if (stabPossible) {
 				calcOpticalFlowPyrLK(uOldGray, uGray, p0, p1, status, errFloat, 
 						winSizeLK, maxLevel, termcrit, 0, 0.001);
-				// Вызов оптического потока с проверкой
-				// try {
-				// 	calcOpticalFlowPyrLK(uOldGray, uGray, p0, p1, status, errFloat, 
-				// 		winSizeLK, maxLevel, termcrit, 0, 0.001);
-				// } catch (cv::Exception& e) {
-				// 	cerr << "calcOpticalFlowPyrLK failed: " << e.what() << endl;
-				// 	// Возврат к методу с использованием Mat
-				// 	Mat oldGrayMat, grayMat;
-				// 	uOldGray.copyTo(oldGrayMat);
-				// 	uGray.copyTo(grayMat);
-				// 	calcOpticalFlowPyrLK(oldGrayMat, grayMat, p0, p1, status, errFloat, 
-				// 		winSizeLK, maxLevel, termcrit, 0, 0.001);
-				// }
 			}
 		}
 		else if (stabPossible) {
@@ -505,48 +490,6 @@ int main()
 
 			transforms[0].getTransform(TStab, a, b, c, atan_ba, framePart);
 			transforms[0].getTransformInvert(TStabInv, a, b, c, atan_ba, framePart);
-
-			// Винеровская фильтрация (CPU версия)
-			/*
-			if (wiener && kSwitch > 0.01)
-			{
-				LEN = sqrt(transforms[1].dx*transforms[1].dx + transforms[1].dy*transforms[1].dy)/qWiener;
-				THETA = (transforms[1].dx == 0.0) ? 
-					(transforms[1].dy > 0.0 ? 90.0 : -90.0) : 
-					atan(transforms[1].dy/transforms[1].dx)*RAD_TO_DEG;
-
-				Mat frameMat;
-				uFrame.copyTo(frameMat);
-				bilateralFilter(frameMat, frameMat, 3, 1.0, 1.0);
-				frameMat.convertTo(frameMat, CV_32F);
-				split(frameMat, channels);
-
-				calcPSF(Hw, frameMat.size(), Size((int)LEN+10, (int)LEN+10), LEN, THETA);
-				calcWnrFilter(Hw, Hw, nsr);
-
-				if (!threadwiener)
-				{
-					for (unsigned short i = 0; i < 3; i++)
-					{
-						filter2DFreq(channels[i], channelsWiener[i], Hw);
-					}
-				}
-				else
-				{
-					std::thread blueChannelWiener(channelWienerCPU, &channels[0], &channelsWiener[0], &Hw);
-					std::thread greenChannelWiener(channelWienerCPU, &channels[1], &channelsWiener[1], &Hw);
-					std::thread redChannelWiener(channelWienerCPU, &channels[2], &channelsWiener[2], &Hw);
-
-					blueChannelWiener.join();
-					greenChannelWiener.join();
-					redChannelWiener.join();
-				}
-				merge(channelsWiener, frameMat);
-				frameMat.convertTo(frameMat, CV_8UC3);
-				bilateralFilter(frameMat, frameMat, 3, 1.0, 1.0);
-				frameMat.copyTo(uFrame);
-			}
-*/
 			
 			cv::warpAffine(uFrame, uFrameStabilized, TStab, Size(a, b));
 			uFrameStabilizatedCrop = uFrameStabilized(roi);  
@@ -554,7 +497,7 @@ int main()
 			endGPUPing = clock();
 						
 			// Вывод изображения
-			if (writeVideo)
+			if (multiScreen)
 			{
 				cv::resize(uFrameStabilizatedCrop, uFrameStabilizatedCropResized, Size(a, b), 0.0, 0.0, INTER_CUBIC);
 				uFrameStabilizatedCropResized.copyTo(frameStabilizatedCropResized);
@@ -579,15 +522,19 @@ int main()
 					tauStab, kSwitch, framePart, p0.size(), maxCorners, seconds, secondsGPUPing, secondsFullPing, 
 					a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab, fontFace, fontScale, colorGREEN);
 
-				writer.write(writerFrame);
-				writerSmall.write(frameStabilizatedCropResized);
+				if (recordEnable)
+				{
+					writer.write(writerFrame);
+					writerSmall.write(frameStabilizatedCropResized);
+				}
+
 				cv::resize(writerFrame, writerFrameToShow, Size(outputResolution, outputResolution*b/a), 0.0, 0.0, INTER_LINEAR);
 				cv::imshow("Writed", writerFrameToShow);
 			}
-			if(!writeVideo) {
+			if(!multiScreen) {
 				cv::resize(uFrameStabilizatedCrop, uWriterFrameToShow, Size(outputResolution, outputResolution*b/a), 0.0, 0.0, INTER_NEAREST);
 				uWriterFrameToShow.copyTo(writerFrameToShow);
-				
+
 				showServiceInfoSmall(writerFrameToShow, qWiener, nsr, wiener, threadwiener, stabPossible, 
 					transforms, movementKalman, tauStab, kSwitch, framePart, p0.size(), maxCorners,
 					seconds, secondsGPUPing, secondsFullPing, a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab,
@@ -608,7 +555,7 @@ int main()
 			uFrameStabilizatedCropResized.copyTo(frameStabilizatedCropResized);
 			endGPUPing = clock();
 			
-			if (writeVideo)
+			if (multiScreen)
 			{
 				cv::resize(uFrameStabilizatedCrop, uFrameStabilizatedCropResized, Size(a, b), 0.0, 0.0, INTER_CUBIC);
 				uFrameStabilizatedCropResized.copyTo(frameStabilizatedCropResized);
@@ -626,8 +573,11 @@ int main()
 					tauStab, kSwitch, framePart, p0.size(), maxCorners, seconds, secondsGPUPing, secondsFullPing, 
 					a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab, fontFace, fontScale, colorRED);
 				
-				writer.write(writerFrame);
-				writerSmall.write(frameStabilizatedCropResized);
+				if (recordEnable)
+				{
+					writer.write(writerFrame);
+					writerSmall.write(frameStabilizatedCropResized);
+				}
 				cv::resize(writerFrame, writerFrameToShow, Size(outputResolution, outputResolution*b/a), 0.0, 0.0, INTER_NEAREST);
 				cv::imshow("Writed", writerFrameToShow);
 			}
@@ -652,6 +602,6 @@ int main()
 	}
 	
 	outputFile.close();
-	//capture.release();
+	capture.release();
 	return 0;
 }
