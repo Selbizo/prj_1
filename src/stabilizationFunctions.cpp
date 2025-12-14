@@ -29,25 +29,26 @@ void initFirstFrame(bool cameraInUse, VideoCapture& capture, string filepath,
 {
     if (cameraInUse)
     {
-        capture >> oldFrame;
+        capture >> uOldFrame;
     }
     else
     {
-        loadImage(oldFrame, frame_id, filepath);
+        loadImage(uOldFrame, frame_id, filepath);
     }
     
-    UMat uMattemp;
+    //UMat uMattemp;
     
-    oldFrame.copyTo(uOldFrame);
+    //oldFrame.copyTo(uOldFrame);
     
     resize(uOldFrame, uOldCompressed, Size(a / compression, b / compression), 
            0.0, 0.0, INTER_LINEAR);
-    cvtColor(uOldCompressed, uMattemp, COLOR_BGR2GRAY);
+    // cvtColor(uOldCompressed, uMattemp, COLOR_BGR2GRAY);
+    cvtColor(uOldCompressed, uOldGray, COLOR_BGR2GRAY);
     
     // Применяем билатеральный фильтр (CPU версия)
-    Mat oldGrayMat;
+    // Mat oldGrayMat;
     //uOldGray.copyTo(oldGrayMat);
-    bilateralFilter(uMattemp, uOldGray, 3, 3.0, 1.0);
+    // bilateralFilter(uMattemp, uOldGray, 3, 3.0, 1.0);
     //oldGrayMat.copyTo(uOldGray);
 
     if (qualityLevel > 0.001 && harrisK > 0.001)
@@ -73,12 +74,11 @@ void initFirstFrame(bool cameraInUse, VideoCapture& capture, string filepath,
     }
 
     // Обнаружение точек на CPU
-    Mat maskMat;
-    mask_device.copyTo(maskMat);
+    //Mat maskMat = mask_device.getMat(ACCESS_READ);
     
     vector<KeyPoint> keypoints;
     // detector->detect(oldGrayMat, keypoints, maskMat);
-    detector->detect(uOldGray, keypoints, maskMat);
+    detector->detect(uOldGray, keypoints, mask_device);
     
     // Конвертируем KeyPoint в Point2f
     p0.clear();
@@ -93,7 +93,7 @@ void initFirstFrame(bool cameraInUse, VideoCapture& capture, string filepath,
         convertVectorToUMat(p0,uP0);
     }
 
-    stab_possible = (p0.size() > 20);
+    stab_possible = (p0.size() > 6);
 }
 
 void initFirstFrame(UMat& uOldGray, UMat& uP0, vector<Point2f>& p0,
@@ -157,13 +157,13 @@ void initFirstFrameZero(Mat& oldFrame, UMat& uOldFrame, UMat& uOldGray,
     double& kSwitch, const int a, const int b, const int compression, 
     UMat& mask_device, bool& stab_possible)
 {
-    oldFrame.copyTo(uOldFrame);
-    UMat uMattemp(Size(a,b), CV_8UC1);
+    //oldFrame.copyTo(uOldFrame);
+    //UMat uMattemp(Size(a,b), CV_8UC1);
     resize(uOldFrame, uOldCompressed, Size(a / compression, b / compression), 
            0.0, 0.0, INTER_AREA);
-    cvtColor(uOldCompressed, uMattemp, COLOR_BGR2GRAY);
+    cvtColor(uOldCompressed, uOldGray, COLOR_BGR2GRAY);
         
-    bilateralFilter(uMattemp, uOldGray, 3, 3.0, 3.0);
+    //bilateralFilter(uMattemp, uOldGray, 3, 3.0, 3.0);
     stab_possible = false;
 }
 
@@ -581,6 +581,78 @@ void iirAdaptive(vector<TransformParam>& transforms, double& tau_stab,
     movementKalman[0].dx = movementKalman[1].dx + movementKalman[0].dx * 0.988;
 }
 
+/*
+void iirAdaptive(vector<TransformParam>& transforms, double& tau_stab, 
+                 Rect& roi, const int a, const int b, const double c, double& kSwitch, 
+                 vector<TransformParam>& movement, vector<TransformParam>& movementKalman) {
+    // Постоянные константы
+    constexpr double MAX_DISPLACEMENT_X = 20.0;
+    constexpr double MAX_DISPLACEMENT_Y = 20.0;
+    constexpr double MAX_ROTATION_DEGREES = 5.0;
+    constexpr double SAFE_THRESHOLD_X = 10.0;
+    constexpr double SAFE_THRESHOLD_Y = 10.0;
+    constexpr double SAFE_THRESHOLD_DEGREES = 3.0;
+    constexpr double REDUCTION_FACTOR = 0.9;
+
+    // Обработка стабилизационных сдвигов
+    if (abs(transforms[1].dx) < MAX_DISPLACEMENT_X &&
+        abs(transforms[1].dy) < MAX_DISPLACEMENT_Y &&
+        abs(transforms[1].da) < MAX_ROTATION_DEGREES * M_PI / 180.0) {
+        transforms[0].dx = kSwitch * (transforms[0].dx * (tau_stab - 1.0) / tau_stab + kSwitch * transforms[1].dx);
+        transforms[0].dy = kSwitch * (transforms[0].dy * (tau_stab - 1.0) / tau_stab + kSwitch * transforms[1].dy);
+        transforms[0].da = kSwitch * (transforms[0].da * (tau_stab - 1.0) / tau_stab + kSwitch * transforms[1].da);
+    } else {
+        cout << "iirAdaptive: Outlier detected." << endl;
+    }
+
+    // Нормализация угла поворота
+    if (transforms[0].da > CV_PI)
+        transforms[0].da -= CV_PI;
+    if (transforms[0].da < -CV_PI)
+        transforms[0].da += CV_PI;
+
+    // Регулировка постоянной адаптации
+    if (tau_stab < 30.0)
+        tau_stab *= 1.2;
+
+    if (tau_stab < 50.0 && !(abs(transforms[0].dx) > a / 2 || abs(transforms[0].dy) > b / 2))
+        tau_stab *= 1.1;
+
+    if (tau_stab < 100.0 && !(abs(transforms[0].dx) > a / 3 || abs(transforms[0].dy) > b / 3)) {
+        tau_stab *= 1.1;
+        if (tau_stab > 100.0)
+            tau_stab = 100.0;
+    }
+
+    // Контроль краевых эффектов
+    if (roi.x + transforms[0].dx < 0 ||
+        roi.x + roi.width + transforms[0].dx >= a ||
+        roi.y + transforms[0].dy < 0 ||
+        roi.y + roi.height + transforms[0].dy >= b) {
+        transforms[0].dx = clamp(transforms[0].dx, (double)(-roi.x), (double)(a - roi.x - roi.width));
+        transforms[0].dy = clamp(transforms[0].dy, (double)(-roi.y), (double)(b - roi.y - roi.height));
+    }
+
+    // Подавляем большие колебания
+    if (abs(transforms[1].dx) > SAFE_THRESHOLD_X ||
+        abs(transforms[1].dy) > SAFE_THRESHOLD_Y ||
+        abs(transforms[1].da) > SAFE_THRESHOLD_DEGREES * M_PI / 180.0) {
+        kSwitch *= REDUCTION_FACTOR;
+    }
+
+    // Сохранение предыдущих значений для анализа динамики
+    transforms[3].dx = (1.0 - 0.1) * transforms[3].dx + 0.1 * abs(transforms[1].dx);
+    transforms[3].dy = (1.0 - 0.1) * transforms[3].dy + 0.1 * abs(transforms[1].dy);
+    transforms[3].da = (1.0 - 0.1) * transforms[3].da + 0.1 * abs(transforms[1].da);
+
+    // Поддерживаем нулевые перемещения по умолчанию
+    transforms[2].dx = 0.0;
+    transforms[2].dy = 0.0;
+    transforms[2].da = 0.0;
+}
+
+*/
+
 void loadImage(cv::Mat& image_color, int frame_id, std::string filepath)
 {
     char file[200];
@@ -593,6 +665,20 @@ void loadImage(cv::Mat& image_color, int frame_id, std::string filepath)
         cerr << "Failed to load image: " << filename << endl;
     }
 }
+
+void loadImage(cv::UMat& image_color, int frame_id, std::string filepath)
+{
+    char file[200];
+    sprintf(file, "image_0/%06d.png", frame_id);
+    std::string filename = filepath + std::string(file);
+    image_color = cv::imread(filename, IMREAD_COLOR).getUMat(ACCESS_READ);
+    
+    if (image_color.empty())
+    {
+        cerr << "Failed to load image: " << filename << endl;
+    }
+}
+
 
 void addGaussianNoise(cv::Mat& image, double mean, double stddev)
 {

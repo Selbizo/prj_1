@@ -1,3 +1,4 @@
+#include <opencv2/core/ocl.hpp>
 #include "basicFunctions.h"
 #include "stabilizationFunctions.h"
 //#include "wienerFilter.h"
@@ -33,9 +34,52 @@ void checkUmatFrames_(UMat uOldGray, UMat uGray)
 		<< " (CV_8UC1 = " << CV_8UC1 << ")" << endl;
 }
 
+
+
+void checkOpenCLStatus() {
+    // Проверка доступности OpenCL
+    if (cv::ocl::haveOpenCL()) {
+        std::cout << "OpenCL is available: YES" << std::endl;
+        
+        // Проверить, используется ли OpenCL
+        if (cv::ocl::useOpenCL()) {
+            std::cout << "OpenCL is enabled: YES" << std::endl;
+            
+            // Получить контекст OpenCL
+            cv::ocl::Context ctx = cv::ocl::Context::getDefault();
+            if (!ctx.empty()) {
+                std::cout << "OpenCL context created: YES" << std::endl;
+                
+                // Получить устройство
+                cv::ocl::Device device = cv::ocl::Device::getDefault();
+                std::cout << "OpenCL Device: " << device.name() << std::endl;
+                std::cout << "Device Type: ";
+                if (device.type() == cv::ocl::Device::TYPE_CPU)
+                    std::cout << "CPU" << std::endl;
+                else if (device.type() == cv::ocl::Device::TYPE_GPU)
+                    std::cout << "GPU" << std::endl;
+                else if (device.type() == cv::ocl::Device::TYPE_ACCELERATOR)
+                    std::cout << "Accelerator" << std::endl;
+                else
+                    std::cout << "Unknown" << std::endl;
+                    
+                std::cout << "Device Vendor: " << device.vendorName() << std::endl;
+                std::cout << "Device Version: " << device.driverVersion() << std::endl;
+                std::cout << "Compute Units: " << device.maxComputeUnits() << std::endl;
+            }
+        } else {
+            std::cout << "OpenCL is enabled: NO" << std::endl;
+        }
+    } else {
+        std::cout << "OpenCL is available: NO" << std::endl;
+    }
+}
+
+
 int main()
 {
-	int outputResolution = 1000;
+	checkOpenCLStatus();
+	int outputResolution = 800;
 	TransformParam noiseIn = { 0.0, 0.0, 0.0 };
 	vector <TransformParam> noiseOut(2);
 	for (int i = 0; i < noiseOut.size();i++)
@@ -62,7 +106,7 @@ int main()
 	}
 	
 	// Создадим массив случайных цветов для цветов характерных точек
-	vector<cv::Scalar> colors;
+	vector<cv::Scalar> colors(1000);
 	RNG rng;
 	for (int i = 0; i < 1000; i++)
 	{
@@ -85,6 +129,7 @@ int main()
 	Size winSizeLK(winSize, winSize);
 
 	Mat oldFrame, oldGray, err;
+	
 
 	vector<Point2f> p0, p1, good_new;
 	UMat uP0, uP1; // Используем UMat для OpenCL
@@ -151,10 +196,6 @@ int main()
 	cv::Mat x0 = (cv::Mat_<double>(state_dim, 1) << 0,0,0,0,0,0,0,0,0);
 	kf.init(0, x0);
 
-	// Переменные для фильтра Виннера
-	//Mat Hw, h, gray_wiener;
-	//UMat uHw, uH, uGrayWiener;
-
 	bool wiener = false;
 	bool threadwiener = false;
 	double nsr = 0.01;
@@ -162,14 +203,8 @@ int main()
 	double LEN = 0;
 	double THETA = 0.0;
 
-	// Для обработки трех каналов по Виннеру
-	//vector<Mat> channels(3), channelsWiener(3);
-	//Mat frame_wiener;
-	//vector<UMat> uChannels(3), uChannelsWiener(3);
-	//UMat uFrameWiener;
-
 	// Для счетчика кадров в секунду
-	unsigned int frameCnt = 0;
+	//unsigned int frameCnt = 0;
 	double seconds = 0.05;
 	double secondsGPUPing = 0.0;
 	double secondsFullPing = 0.0;
@@ -201,15 +236,14 @@ int main()
 	const double atan_ba = atan2(b, a);
 
 	// Переменные для запоминания кадров
-	Mat frame(a, b, CV_8UC3), frameShowOrig(a, b, CV_8UC3), frameOut(a, b, CV_8UC3);
+	Mat frameShowOrig(a, b, CV_8UC3), frameOut(a, b, CV_8UC3);
 	UMat uFrameStabilized(Size(a, b), CV_8UC3, USAGE_DEFAULT);
 
-	UMat uFrame(Size(a, b), CV_8UC3), uFrameShowOrig(Size(a, b), CV_8UC3),
-		uGray(Size(a/compression, b/compression), CV_8UC1), 
+	UMat uOldFrame(Size(a, b), CV_8UC3), uFrame(Size(a, b), CV_8UC3), uFrameShowOrig(Size(a, b), CV_8UC3),
+		uGray(Size(a/compression, b/compression), CV_8UC1),
 		uCompressed(Size(a/compression, b/compression), CV_8UC3);
 
-	UMat uOldFrame(Size(a, b), CV_8UC3), 
-		uOldGray(Size(a/compression, b/compression), CV_8UC1), 
+	UMat uOldGray(Size(a/compression, b/compression), CV_8UC1), 
 		uOldCompressed(Size(a/compression, b/compression), CV_8UC3);
 	UMat uToShow(Size(a, b), CV_8UC3);
 
@@ -324,13 +358,16 @@ int main()
 	while (true) {
 		initFirstFrame(cameraInUse, capture, filepath, init_frame_id, oldFrame, uOldFrame, uOldCompressed, uOldGray, 
 			uP0, p0, qualityLevel, harrisK, maxCorners, detector, transforms, 
-			kSwitch, a, b, compression, uMaskSearch, stabPossible); //8-977-871-2770
+			kSwitch, a, b, compression, uMaskSearch, stabPossible);
+		imshow("InitFirstFrame", oldFrame);
+		waitKey(1);
+		cout << "Initial Corners: " << p0.size() << endl;
 		init_frame_id++;
 		if (stabPossible)
 			break;
 	}
 	//checkUmatFrames(uOldGray, uGray);
-	for(int frameCount = init_frame_id + 1; frameCount < 4500; frameCount++){
+	for(int frameCount = init_frame_id + 1; frameCount < 450000; frameCount++){
 		secondsFullPing = 0.96*secondsFullPing + 0.04*(double)(endFullPing-startFullPing)/CLOCKS_PER_SEC;
 		startFullPing = clock();
 		secondsGPUPing = 0.96*secondsGPUPing + 0.04*(double)(endGPUPing-startGPUPing)/CLOCKS_PER_SEC;
@@ -350,11 +387,12 @@ int main()
 			if (p1.size() < double(maxCorners*5/7) && (abs(meanP0.x-a/2) < a/6 || abs(meanP0.y-b/2) < b/6))
 			{
 				movementKalman[1].getTransformBoost(TSearchPoints, a, b, rng);
-				Mat maskSearchSmallMat;
-				uMaskSearchSmall.copyTo(maskSearchSmallMat);
-				Mat maskSearchSmallRoiMat;
-				cv::warpAffine(maskSearchSmallMat, maskSearchSmallRoiMat, TSearchPoints, maskSearchSmallMat.size());
-				maskSearchSmallRoiMat.copyTo(uMaskSearchSmallRoi);
+				//Mat maskSearchSmallMat;
+				//uMaskSearchSmall.copyTo(maskSearchSmallMat);
+				//Mat maskSearchSmallRoiMat;
+				//cv::warpAffine(maskSearchSmallMat, maskSearchSmallRoiMat, TSearchPoints, maskSearchSmallMat.size());
+				cv::warpAffine(uMaskSearchSmall, uMaskSearchSmallRoi, TSearchPoints, uMaskSearchSmall.size());
+				//maskSearchSmallRoiMat.copyTo(uMaskSearchSmallRoi);
 				
 				//Mat grayMat;
 				//uGray.copyTo(grayMat);
@@ -362,7 +400,8 @@ int main()
 				removeFramePoints(p0, minDistance*0.8);
 			}
 			
-			uGray.copyTo(uOldGray);
+			//uGray.copyTo(uOldGray);
+			swap(uGray, uOldGray);
 			convertVectorToUMat(p0, uP0);
 			if (kSwitch < 0.01) kSwitch = 0.01;
 			if (kSwitch < 1.0)
@@ -372,8 +411,8 @@ int main()
 			}
 			else if (kSwitch > 1.0) kSwitch = 1.0;
 
-			if(cameraInUse) capture >> frame;
-			else loadImage(frame, frameCount, filepath);
+			if(cameraInUse) capture >> uFrame;
+			else loadImage(uFrame, frameCount, filepath);
 
 			// noiseIn.dx = (double)(rng.uniform(-5.0, 5.0))/4;
        		// noiseIn.dy = (double)(rng.uniform(-5.0, 5.0))/4;
@@ -384,31 +423,30 @@ int main()
     		// cv::warpAffine(frame, frame, TShake, frame.size());
 		}
 
-		if (frameCnt % 128 == 1)
+		if (frameCount % 128 == 1)
 		{
 			end = clock();
 			seconds = (double)(end-start)/CLOCKS_PER_SEC/128;
 			start = clock();
 		}
 
-		if (frame.empty() && cameraInUse)
+		if (uFrame.empty() && cameraInUse)
 		{
 			capture.release();
 			capture = VideoCapture(videoSource);
-			capture >> frame;
+			capture >> uFrame;
 		}
 
-		if ((multiScreen || recordEnable) && stabPossible) writerFrame.setTo(colorBLACK);
-		frameCnt++;
+		//if ((multiScreen || recordEnable) && stabPossible) writerFrame.setTo(colorBLACK);
+		
 
 		startGPUPing = clock();
 		if (stabPossible) {
 			
-			frame.copyTo(uFrame);
+			//frame.copyTo(uFrame);
 
 			cv::resize(uFrame, uCompressed, Size(a/compression, b/compression), 0.0, 0.0, INTER_AREA);
-			cv::cvtColor(uCompressed, UMatTemp_, COLOR_BGR2GRAY);
-			cv::bilateralFilter(UMatTemp_, uGray, 3, 1.0, 1.0);
+			cv::cvtColor(uCompressed, uGray, COLOR_BGR2GRAY);
 		}
 
 		if ((p0.size() < maxCorners*1/5) || !stabPossible)
@@ -420,8 +458,8 @@ int main()
 			p0.clear();
 			p1.clear();
 
-			if(cameraInUse) capture >> frame;
-			else loadImage(frame, frameCount, filepath);
+			if(cameraInUse) capture >> uFrame;
+			else loadImage(uFrame, frameCount, filepath);
 			
 			// noiseIn.dx = (double)(rng.uniform(-5.0, 5.0));
        		// noiseIn.dy = (double)(rng.uniform(-5.0, 5.0));
@@ -435,14 +473,12 @@ int main()
 				cv::rectangle(writerFrame, Rect(a, b, a, b), cv::Scalar(0,0,0), cv::FILLED);
 			}
 			
-			frame.copyTo(uFrame);
+			//frame.copyTo(uFrame);
 			cv::resize(uFrame, uCompressed, Size(a/compression, b/compression), 0.0, 0.0, INTER_AREA);
-			cv::cvtColor(uCompressed, UMatTemp_, COLOR_BGR2GRAY);
-			cv::bilateralFilter(UMatTemp_, uGray, 3, 1.0, 1.0);
+			cv::cvtColor(uCompressed, uGray, COLOR_BGR2GRAY);
 
-			if (frameCnt % 10 == 1 && !stabPossible)
+			if (frameCount % 10 == 1 && !stabPossible)
 			{
-	
 				initFirstFrame(cameraInUse, capture, filepath, frameCount, oldFrame, uOldFrame, uOldCompressed, uOldGray, 
 					uP0, p0, qualityLevel, harrisK, maxCorners, detector, transforms,
 					kSwitch, a, b, compression, uMaskSearch, stabPossible);
@@ -452,7 +488,6 @@ int main()
 				initFirstFrameZero(oldFrame, uOldFrame, uOldGray, uOldCompressed, 
 					uP0, p0, qualityLevel, harrisK, maxCorners, detector, transforms, 
 					kSwitch, a, b, compression, uMaskSearch, stabPossible);
-				
 			}
 
 			if (stabPossible) {
@@ -473,7 +508,7 @@ int main()
 		
 		if (stabPossible) {
 			getBiasAndRotation(p0, p1, d, meanP0, transforms, T, compression);
-			iirAdaptiveHighPass(transforms, tauStab, roi, a, b, c, kSwitch, movement, movementKalman);
+			iirAdaptive(transforms, tauStab, roi, a, b, c, kSwitch, movement, movementKalman);
 
 			kf.update((cv::Mat_<double>(3, 1) << transforms[1].dx, transforms[1].dy, transforms[1].da));
 			cv::Mat state = kf.state();
@@ -499,7 +534,7 @@ int main()
 			// Вывод изображения
 			if (multiScreen)
 			{
-				cv::resize(uFrameStabilizatedCrop, uFrameStabilizatedCropResized, Size(a, b), 0.0, 0.0, INTER_CUBIC);
+				cv::resize(uFrameStabilizatedCrop, uFrameStabilizatedCropResized, Size(a, b), 0.0, 0.0, INTER_NEAREST);
 				uFrameStabilizatedCropResized.copyTo(frameStabilizatedCropResized);
 				
 				frameStabilizatedCropResized.copyTo(writerFrame(Rect(0, 0, a, b)));
@@ -528,7 +563,7 @@ int main()
 					writerSmall.write(frameStabilizatedCropResized);
 				}
 
-				cv::resize(writerFrame, writerFrameToShow, Size(outputResolution, outputResolution*b/a), 0.0, 0.0, INTER_LINEAR);
+				cv::resize(writerFrame, writerFrameToShow, Size(outputResolution, outputResolution*b/a), 0.0, 0.0, INTER_NEAREST);
 				cv::imshow("Writed", writerFrameToShow);
 			}
 			if(!multiScreen) {
@@ -557,17 +592,17 @@ int main()
 			
 			if (multiScreen)
 			{
-				cv::resize(uFrameStabilizatedCrop, uFrameStabilizatedCropResized, Size(a, b), 0.0, 0.0, INTER_CUBIC);
+				cv::resize(uFrameStabilizatedCrop, uFrameStabilizatedCropResized, Size(a, b), 0.0, 0.0, INTER_NEAREST);
 				uFrameStabilizatedCropResized.copyTo(frameStabilizatedCropResized);
 				
 				uFrameRoi = uFrame(roi);
 				cv::resize(uFrameRoi, uFrameOut, Size(a, b), 0.0, 0.0, INTER_NEAREST);
 				cv::warpAffine(uCrossRef, uCross, TStab, Size(a, b));
-				uFrameOut.copyTo(frameOut);
+				//uFrameOut.copyTo(frameOut);
 								
-				frame.copyTo(writerFrame(Rect(a, 0, a, b)));
-				frameOut.copyTo(writerFrame(Rect(0, 0, a, b)));
-				frameOut.copyTo(writerFrame(Rect(0, b, a, b)));
+				uFrame.copyTo(writerFrame(Rect(a, 0, a, b)));
+				uFrameOut.copyTo(writerFrame(Rect(0, 0, a, b)));
+				uFrameOut.copyTo(writerFrame(Rect(0, b, a, b)));
 
 				showServiceInfo(writerFrame, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movement, movementKalman, 
 					tauStab, kSwitch, framePart, p0.size(), maxCorners, seconds, secondsGPUPing, secondsFullPing, 
@@ -594,14 +629,149 @@ int main()
 				cv::imshow("Writed", writerFrameToShow);
 			}
 		}
-		
-		int keyboard = waitKey(10);
-		if (keyResponse(keyboard, frame, frameStabilizatedCropResized, crossRef, uCrossRef, a, b, nsr, wiener, threadwiener, qWiener, tauStab, framePart, roi))
-					break;
+		int keyboard = waitKey(5);
+		if (keyResponse(keyboard, uFrame, frameStabilizatedCropResized, crossRef, uCrossRef, a, b, nsr, wiener, threadwiener, qWiener, tauStab, framePart, roi))
+			break;
 		endFullPing = clock();
+		waitKey(1);
 	}
 	
 	outputFile.close();
 	capture.release();
 	return 0;
 }
+
+/*
+#include <opencv2/opencv.hpp>
+#include <opencv2/core/ocl.hpp>
+#include <iostream>
+#include <fstream>
+
+int main() {
+    std::cout << "=== OpenCL Check for Banana Pi CM4 ===\n" << std::endl;
+    
+    // 1. Базовая информация
+    std::cout << "1. OpenCV Information:" << std::endl;
+    std::cout << "   Version: " << CV_VERSION << std::endl;
+    std::cout << "   Build info: " << cv::getBuildInformation() << std::endl;
+    
+    // 2. Проверка OpenCL
+    std::cout << "\n2. OpenCL Status:" << std::endl;
+    bool haveOpenCL = cv::ocl::haveOpenCL();
+	cv::ocl::setUseOpenCL(true);
+    std::cout << "   Have OpenCL: " << (haveOpenCL ? "YES" : "NO") << std::endl;
+
+    if (haveOpenCL) {
+        bool useOpenCL = cv::ocl::useOpenCL();
+        std::cout << "   Use OpenCL: " << (useOpenCL ? "YES" : "NO") << std::endl;
+		useOpenCL = cv::ocl::useOpenCL();
+        std::cout << "\nAfter turning ON\n   Use OpenCL: " << (useOpenCL ? "YES" : "NO") << std::endl;
+        cv::ocl::Context ctx = cv::ocl::Context::getDefault();
+        if (!ctx.empty()) {
+            cv::ocl::Device dev = cv::ocl::Device::getDefault();
+            std::cout << "   Device: " << dev.name() << std::endl;
+            std::cout << "   Vendor: " << dev.vendorName() << std::endl;
+            std::cout << "   Version: " << dev.driverVersion() << std::endl;
+            std::cout << "   Type: ";
+            switch (dev.type()) {
+                case cv::ocl::Device::TYPE_CPU: std::cout << "CPU"; break;
+                case cv::ocl::Device::TYPE_GPU: std::cout << "GPU"; break;
+                case cv::ocl::Device::TYPE_ACCELERATOR: std::cout << "Accelerator"; break;
+                default: std::cout << "Unknown";
+            }
+            std::cout << std::endl;
+            
+            // Проверить, ARM ли это
+            std::string name = dev.name();
+            if (name.find("Mali") != std::string::npos ||
+                name.find("ARM") != std::string::npos ||
+                name.find("VideoCore") != std::string::npos) {
+                std::cout << "   *** ARM GPU detected! ***" << std::endl;
+            }
+        }
+    }
+    
+    // 3. Тест производительности UMat
+    std::cout << "\n3. UMat Performance Test:" << std::endl;
+    
+    cv::UMat testImage(1080, 1920, CV_8UC3);
+    cv::randu(testImage, 0, 255);
+    
+    cv::UMat result;
+    
+    // Тест с OpenCL
+    if (cv::ocl::useOpenCL()) {
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < 10; ++i) {
+            cv::GaussianBlur(testImage, result, cv::Size(5, 5), 1.0);
+        }
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        std::cout << "   OpenCL GaussianBlur (10x): " << duration.count() << " ms" << std::endl;
+    }
+    
+    // Тест без OpenCL
+    cv::ocl::setUseOpenCL(false);
+    cv::Mat cpuImage; testImage.copyTo(cpuImage);
+    cv::Mat cpuResult;
+    
+    auto start = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < 10; ++i) {
+        cv::GaussianBlur(cpuImage, cpuResult, cv::Size(5, 5), 1.0);
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "   CPU GaussianBlur (10x): " << duration.count() << " ms" << std::endl;
+    
+    // Вернуть настройки
+    cv::ocl::setUseOpenCL(true);
+    
+    // 4. Проверить конкретные операции из вашего кода
+    std::cout << "\n4. Testing Your Pipeline Operations:" << std::endl;
+    
+    cv::UMat src(540, 960, CV_8UC3, cv::Scalar(100, 150, 200));
+    cv::UMat compressed, gray;
+    
+    start = std::chrono::high_resolution_clock::now();
+    cv::resize(src, compressed, cv::Size(480, 270), 0, 0, cv::INTER_AREA);
+    end = std::chrono::high_resolution_clock::now();
+    std::cout << "   resize: " 
+              << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() 
+              << " μs" << std::endl;
+    
+    start = std::chrono::high_resolution_clock::now();
+    cv::cvtColor(compressed, gray, cv::COLOR_BGR2GRAY);
+    end = std::chrono::high_resolution_clock::now();
+    std::cout << "   cvtColor: " 
+              << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() 
+              << " μs" << std::endl;
+    
+    // 5. Проверить optical flow (если доступно)
+    std::cout << "\n5. Optical Flow Test:" << std::endl;
+    
+    cv::UMat prevGray(270, 480, CV_8UC1);
+    cv::UMat currGray(270, 480, CV_8UC1);
+    cv::randu(prevGray, 0, 255);
+    cv::randu(currGray, 0, 255);
+    
+    std::vector<cv::Point2f> prevPts, nextPts;
+    std::vector<uchar> status;
+    std::vector<float> err;
+    
+    // Генерировать точки
+    for (int i = 0; i < 100; ++i) {
+        prevPts.push_back(cv::Point2f(rand() % 480, rand() % 270));
+    }
+    
+    start = std::chrono::high_resolution_clock::now();
+    cv::calcOpticalFlowPyrLK(prevGray, currGray, prevPts, nextPts, 
+                             status, err, cv::Size(21, 21), 3);
+    end = std::chrono::high_resolution_clock::now();
+    std::cout << "   calcOpticalFlowPyrLK: " 
+              << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() 
+              << " μs" << std::endl;
+    
+    std::cout << "\n=== Test Complete ===" << std::endl;
+    
+    return 0;
+}*/

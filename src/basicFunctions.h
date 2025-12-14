@@ -26,7 +26,7 @@ void convertVectorToUMat(const vector<Point2f>& p0, UMat& uP0);
 
 int camera_calibration(int argc, char** argv);
 
-bool keyResponse(int& keyboard, Mat& frame, Mat& croppedImg, Mat& crossRef, UMat gCrossRef,
+bool keyResponse(int& keyboard, UMat& frame, Mat& croppedImg, Mat& crossRef, UMat gCrossRef,
 	const double& a, const double& b, double& nsr, bool& wiener, bool& threadwiener, double& Q,
 	double& tauStab, double& framePart, Rect& roi);
 

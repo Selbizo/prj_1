@@ -10,8 +10,6 @@
 using namespace cv;
 using namespace std;
 
-
-
 //string videoSource = "http://192.168.0.102:4747/video"; // pad6-100, pixel4-101, pixel-102
 //string videoSource = "http://10.108.144.71:4747/video"; // pad6-100, pixel4-101, pixel-102
 //string videoSource = "http://10.139.27.71:4747/video"; // pad6-100, pixel4-101, pixel-102
@@ -25,15 +23,19 @@ using namespace std;
 
 //string videoSource = "/home/selbizo/CV/StabAndSLAM/visual_odom/src/SourceVideos/FlightShakedVideo.mp4"; // pad6-100, pixel4-101, pixel-102
 
-//string videoSource = "http://192.168.0.102:4747/video?640x480";
-string videoSource = "/media/pi/sd30gb/dataset/videos/PXL_3.mp4";
+// string videoSource = "http://192.168.0.104:4747/video?640x480";
+string videoSource = "/home/bananapi/Opencv_projects/dataset/videos/PXL_3.mp4";
+// string videoSource = "/home/bananapi/Opencv_projects/dataset/videos/PXL_3.mp4";
+
+
 // int videoSource = 0;
 
-bool multiScreen = true;
+
+bool multiScreen = false;
 bool recordEnable = false;
 bool stabPossible = false;
 
-const int compression = 1; // //4k 1->26ms 2->20ms 3->20ms
+const int compression = 2; // //4k 1->26ms 2->20ms 3->20ms
 
 //
 int	srcType = CV_8UC1;
@@ -54,12 +56,13 @@ int maxLevel = 3;
 int iters = 6;
 
 
-bool cameraInUse = true;
+bool cameraInUse = false;
 
 //string videoSourceForShaked = "./SourceVideos/Forestfhd.mp4"; // pad6-100, pixel4-101, pixel-102
 //int videoSourceForShaked = 0; // pad6-100, pixel4-101, pixel-102
 string videoSourceForShaked = "./SourceVideos/ForestShakedVideo.avi"; // pad6-100, pixel4-101, pixel-102
 
 int init_frame_id = 0;
-string filepath = string("/media/pi/sd30gb/dataset/sequences/15/");
+//string filepath = string("/home/bananapi/Opencv_projects/dataset/sequences/15/");
+string filepath = string("/home/bananapi/Opencv_projects/dataset/videos/PXL_3/");
 //cout << "Filepath: " << filepath << endl;

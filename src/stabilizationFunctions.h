@@ -7,7 +7,7 @@
 #include <opencv2/core.hpp>          
 #include <opencv2/imgproc.hpp>       
 #include <opencv2/videoio.hpp>       
-#include <opencv2/core/cuda.hpp>
+//#include <opencv2/core/cuda.hpp>
 
 // #include <opencv2/cudaarithm.hpp>    
 // #include <opencv2/cudaimgproc.hpp>   
@@ -80,6 +80,7 @@ void iirAdaptive(vector<TransformParam>& transforms, double& tau_stab,
 
 
 void loadImage(cv::Mat& image_color, int frame_id, std::string filepath);
+void loadImage(cv::UMat& image_color, int frame_id, std::string filepath);
 
 #define NCoef 10
 #define DCgain 4

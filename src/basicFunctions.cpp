@@ -147,7 +147,7 @@ int camera_calibration(int argc, char** argv) {
 	return 0;
 }
 
-bool keyResponse(int& keyboard, Mat& frame, Mat& croppedImg, Mat& crossRef, UMat uCrossRef,
+bool keyResponse(int& keyboard, UMat& frame, Mat& croppedImg, Mat& crossRef, UMat uCrossRef,
 	const double& a, const double& b, double& nsr, bool& wiener, bool& threadwiener, double& Q,
 	double& tauStab, double& framePart, Rect& roi)
 {

@@ -1,6 +1,8 @@
 #banana PI config v1
 # set(OpenCV_DIR "/media/pi/sd30gb/opencv340/opencv/build")
-set(OpenCV_DIR "/media/pi/sd30gb/opencv4120/opencv/build")
+
+#set(OpenCV_DIR "/media/pi/sd30gb/opencv4120/opencv/build")
+set(OpenCV_DIR "/home/bananapi/opencv4120/opencv/build")
 find_package(OpenCV REQUIRED)
 
 add_library(basicFunctions SHARED "basicFunctions.cpp")
