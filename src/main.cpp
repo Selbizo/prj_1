@@ -79,7 +79,7 @@ void checkOpenCLStatus() {
 int main()
 {
 	checkOpenCLStatus();
-	int outputResolution = 800;
+	int outputResolution = 1000;
 	TransformParam noiseIn = { 0.0, 0.0, 0.0 };
 	vector <TransformParam> noiseOut(2);
 	for (int i = 0; i < noiseOut.size();i++)
@@ -387,15 +387,7 @@ int main()
 			if (p1.size() < double(maxCorners*5/7) && (abs(meanP0.x-a/2) < a/6 || abs(meanP0.y-b/2) < b/6))
 			{
 				movementKalman[1].getTransformBoost(TSearchPoints, a, b, rng);
-				//Mat maskSearchSmallMat;
-				//uMaskSearchSmall.copyTo(maskSearchSmallMat);
-				//Mat maskSearchSmallRoiMat;
-				//cv::warpAffine(maskSearchSmallMat, maskSearchSmallRoiMat, TSearchPoints, maskSearchSmallMat.size());
 				cv::warpAffine(uMaskSearchSmall, uMaskSearchSmallRoi, TSearchPoints, uMaskSearchSmall.size());
-				//maskSearchSmallRoiMat.copyTo(uMaskSearchSmallRoi);
-				
-				//Mat grayMat;
-				//uGray.copyTo(grayMat);
 				addFramePoints(uGray, p0, detector_small, uMaskSearchSmallRoi);
 				removeFramePoints(p0, minDistance*0.8);
 			}
@@ -414,15 +406,6 @@ int main()
 			if(cameraInUse) capture >> uFrame;
 			else loadImage(uFrame, frameCount, filepath);
 
-			// noiseIn.dx = (double)(rng.uniform(-5.0, 5.0))/4;
-       		// noiseIn.dy = (double)(rng.uniform(-5.0, 5.0))/4;
-       		// noiseIn.da = (double)(rng.uniform(-100.0, 100.0)*0.0001)/8;
-
-       		// noiseOut[0] = iirNoise(noiseIn, X, Y);
-    		// noiseOut[0].getTransform(TShake);
-    		// cv::warpAffine(frame, frame, TShake, frame.size());
-		}
-
 		if (frameCount % 128 == 1)
 		{
 			end = clock();
@@ -437,14 +420,12 @@ int main()
 			capture >> uFrame;
 		}
 
-		//if ((multiScreen || recordEnable) && stabPossible) writerFrame.setTo(colorBLACK);
+		if ((multiScreen) && stabPossible) writerFrame(Rect(a,b,a,b)).setTo(colorBLACK);
 		
 
 		startGPUPing = clock();
 		if (stabPossible) {
 			
-			//frame.copyTo(uFrame);
-
 			cv::resize(uFrame, uCompressed, Size(a/compression, b/compression), 0.0, 0.0, INTER_AREA);
 			cv::cvtColor(uCompressed, uGray, COLOR_BGR2GRAY);
 		}
@@ -461,19 +442,10 @@ int main()
 			if(cameraInUse) capture >> uFrame;
 			else loadImage(uFrame, frameCount, filepath);
 			
-			// noiseIn.dx = (double)(rng.uniform(-5.0, 5.0));
-       		// noiseIn.dy = (double)(rng.uniform(-5.0, 5.0));
-       		// noiseIn.da = (double)(rng.uniform(-0.05, 0.05));
-
-       		// noiseOut[0] = iirNoise(noiseIn, X, Y);
-    		// noiseOut[0].getTransform(TShake);
-    		// cv::warpAffine(frame, frame, TShake, frame.size());
-
 			if (!stabPossible) {
 				cv::rectangle(writerFrame, Rect(a, b, a, b), cv::Scalar(0,0,0), cv::FILLED);
 			}
 			
-			//frame.copyTo(uFrame);
 			cv::resize(uFrame, uCompressed, Size(a/compression, b/compression), 0.0, 0.0, INTER_AREA);
 			cv::cvtColor(uCompressed, uGray, COLOR_BGR2GRAY);
 
