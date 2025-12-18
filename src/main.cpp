@@ -1,3 +1,4 @@
+/*
 #include <opencv2/core/ocl.hpp>
 #include "basicFunctions.h"
 #include "stabilizationFunctions.h"
@@ -405,7 +406,7 @@ int main()
 
 			if(cameraInUse) capture >> uFrame;
 			else loadImage(uFrame, frameCount, filepath);
-
+		}
 		if (frameCount % 128 == 1)
 		{
 			end = clock();
@@ -612,7 +613,7 @@ int main()
 	capture.release();
 	return 0;
 }
-
+*/
 /*
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/ocl.hpp>
@@ -747,3 +748,211 @@ int main() {
     
     return 0;
 }*/
+
+
+
+
+#include <opencv2/opencv.hpp>
+#include <thread>
+#include <atomic>
+#include <queue>
+#include <iostream>
+#include <string>
+#include <chrono>
+
+
+#include "ConfigVideoStab.h"
+
+using namespace std;
+using namespace cv;
+
+class SimpleVideoProcessor {
+private:
+    // Очереди для передачи данных между потоками
+    std::queue<cv::Mat> rawFrameQueue;      // Для исходных кадров
+    std::queue<cv::Mat> processedFrameQueue; // Для обработанных кадров
+    std::queue<std::pair<cv::Mat, cv::Mat>> displayQueue; // Для отображения (оригинал + результат)
+    
+    // Мьютексы для каждой очереди
+    std::mutex rawQueueMutex;
+    std::mutex processedQueueMutex;
+    std::mutex displayQueueMutex;
+    
+    std::atomic<bool> running{true};
+    std::atomic<int> currentFrameId{0};
+    std::string filepath;
+    int totalFrames;
+    int processedFrames = 0;
+
+public:
+    SimpleVideoProcessor(const std::string& path, int startFrame = 0, int framesCount = 10000) 
+        : filepath(path), currentFrameId(startFrame), totalFrames(framesCount) {
+        
+        cv::UMat testImage;
+        loadImage(testImage, startFrame, filepath);
+        if (testImage.empty()) {
+            std::cerr << "Не удалось загрузить начальный кадр!" << std::endl;
+        }
+    }
+    
+    void loadImage(cv::UMat& image_color, int frame_id, std::string filepath) {
+        char file[200];
+        sprintf(file, "image_0/%06d.png", frame_id);
+        std::string filename = filepath + std::string(file);
+        image_color = cv::imread(filename, IMREAD_COLOR).getUMat(ACCESS_READ);
+        
+        if (image_color.empty()) {
+            cerr << "Failed to load image: " << filename << endl;
+        }
+    }
+    
+    void run() {
+        // 1. Поток захвата кадров (загрузки изображений)
+        std::thread captureThread([this]() {
+            while (running && currentFrameId.load() < totalFrames) {
+                cv::UMat frame_umat;
+                loadImage(frame_umat, currentFrameId.load(), filepath);
+                
+                if (frame_umat.empty()) {
+                    running = false;
+                    break;
+                }
+                
+                cv::Mat frame = frame_umat.getMat(ACCESS_READ).clone();
+                
+                {
+                    std::lock_guard<std::mutex> lock(rawQueueMutex);
+                    if (rawFrameQueue.size() < 10) { // Увеличиваем буфер
+                        rawFrameQueue.push(frame);
+                    }
+                }
+                
+                currentFrameId++;
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            
+            running = false;
+            cout << "Capture thread finished." << endl;
+        });
+        
+        // 2. Поток обработки изображений
+        std::thread processThread([this]() {
+            
+            
+            while (running || !rawFrameQueue.empty()) {
+                cv::Mat frame;
+                
+                // Извлечение кадра из очереди сырых данных
+                {
+                    std::lock_guard<std::mutex> lock(rawQueueMutex);
+                    if (!rawFrameQueue.empty()) {
+                        frame = rawFrameQueue.front();
+                        rawFrameQueue.pop();
+                    }
+                }
+                
+                if (frame.empty()) {
+                    if (running) {
+						cout << "rawQueue is empty" << endl;
+                        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                        continue;
+                    } else {
+						break;
+                    }
+                }
+                
+				// Обработка изображения
+                cv::Mat blurred, result;
+                cv::GaussianBlur(frame, result, cv::Size(31, 31), 11.0);
+
+                // Помещаем пару (оригинал + результат) в очередь отображения
+                {
+                    std::lock_guard<std::mutex> lock(displayQueueMutex);
+                    displayQueue.push({frame.clone(), result.clone()});
+                }
+                
+                processedFrames++;
+            }
+            
+            cout << "Processing thread finished. Processed frames: " << processedFrames << endl;
+        });
+        
+        // 3. Поток отображения
+        std::thread displayThread([this]() {
+            int displayedFrames = 0;
+            
+            while (running || !displayQueue.empty()) {
+                cv::Mat original, result;
+                
+                // Извлечение данных для отображения
+                {
+                    std::lock_guard<std::mutex> lock(displayQueueMutex);
+                    if (!displayQueue.empty()) {
+                        auto pair = displayQueue.front();
+                        original = pair.first;
+                        result = pair.second;
+                        displayQueue.pop();
+                        displayedFrames++;
+                    }
+                }
+                
+                if (original.empty() || result.empty()) {
+                    if (running) {
+                        //std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+                
+                // Создание промежуточных изображений для отображения
+
+                // Добавление информации о кадре
+                string frameInfo1 = "Frame: " + to_string(currentFrameId.load());
+                string frameInfo2 = "Frame: " + to_string(processedFrames);
+                cv::putText(original, frameInfo1, cv::Point(10, 30), 
+                           cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
+                cv::putText(result, frameInfo2, cv::Point(10, 30), 
+                           cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 20, 255), 2);
+
+                
+                // Отображение всех окон
+                cv::imshow("Original", original);
+                cv::imshow("Result", result);
+                
+                // Обработка нажатий клавиш
+                int key = cv::waitKey(1);
+                if (key == 27) { // ESC
+                    running = false;
+                    break;
+                } else if (key == 's') { // Пример: сохранение по нажатию 's'
+                    cv::imwrite("saved_frame_" + to_string(displayedFrames) + ".png", result);
+                    cout << "Frame saved: saved_frame_" << displayedFrames << ".png" << endl;
+                } else if (key == 'p') { // Пауза по нажатию 'p'
+                    cv::waitKey(0);
+                }
+            }
+            
+            cout << "Display thread finished. Displayed frames: " << displayedFrames << endl;
+            cv::destroyAllWindows();
+        });
+        
+        // Ожидание завершения всех потоков
+        captureThread.join();
+        processThread.join();
+        displayThread.join();
+        
+        cout << "All threads finished successfully." << endl;
+    }
+};
+
+int main() {
+    // Укажите путь к папке с кадрами
+    //string filepath = "/path/to/your/frames/folder/";
+    
+    // Создаем процессор, указывая путь, начальный кадр и общее количество кадров
+    SimpleVideoProcessor processor(filepath, 0, 10000);
+    processor.run();
+    
+    return 0;
+}

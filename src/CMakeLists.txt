@@ -12,7 +12,7 @@ target_link_libraries(basicFunctions ${OpenCV_LIBS})
 target_link_libraries(stabilizationFunctions ${OpenCV_LIBS})
 #target_link_libraries(wienerFilter ${OpenCV_LIBS})
 
-add_executable( run main.cpp )
+add_executable( run main2.cpp )
 
 include_directories(${OpenCV_INCLUDE_DIRS} )
 
