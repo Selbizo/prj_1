@@ -31,29 +31,26 @@ string videoSource = "/home/bananapi/Opencv_projects/dataset/videos/PXL_3.mp4";
 // int videoSource = 0;
 
 
-bool multiScreen = true;
-bool recordEnable = false;
+static bool multiScreen = true;
+static bool recordEnable = false;
 bool stabPossible = false;
 
-const int compression = 2; // //4k 1->26ms 2->20ms 3->20ms
+static const int compressionConfig = 2; // //4k 1->26ms 2->20ms 3->20ms
 
 //
-int	srcType = CV_8UC1;
-int maxCorners = 40 / compression; //100/n
-double qualityLevel = 0.005 / compression; //0.0001
-// double minDistance = 6.0 / compression + 3.0; //8.0
-double minDistance = 4.0; //8.0
-// int blockSize = 40 / compression + 8; //45 80 
-int blockSize = 9; //45 80 
-bool useHarrisDetector = true;
-double harrisK = qualityLevel;
+static const int srcType = CV_8UC1;
+int maxCornersConfig = 40 / compressionConfig; //100/n
+static double qualityLevelConfig = 0.005 / compressionConfig; //0.0001
+static double minDistanceConfig = 4.0; //8.0
+static int blockSizeConfig = 9; //45 80 
+static bool useHarrisDetectorConfig = true;
+double harrisKConfig = qualityLevelConfig;
 
 // 
-bool useGray = true;
-int winSize = blockSize;
-// int maxLevel = 3 + 4/compression;
-int maxLevel = 5;
-int iters = 6;
+static const bool useGray = true;
+int winSizeConfig = blockSizeConfig;
+int maxLevelConfig = 5;
+int itersConfig = 6;
 
 
 bool cameraInUse = false;

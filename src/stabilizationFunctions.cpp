@@ -9,13 +9,13 @@ void createDetectors(Ptr<FeatureDetector>& detector, Ptr<FeatureDetector>& detec
     Ptr<FeatureDetector>& detector_extra)
 {
     detector = GFTTDetector::create(
-        maxCorners, qualityLevel, minDistance, blockSize, useHarrisDetector, harrisK);
+        maxCornersConfig, qualityLevelConfig, minDistanceConfig, blockSizeConfig, useHarrisDetectorConfig, harrisKConfig);
         
     detector_small = GFTTDetector::create(
-        20, qualityLevel*1.5, minDistance*1.5, blockSize, useHarrisDetector, harrisK);
+        20, qualityLevelConfig*1.5, minDistanceConfig*1.5, blockSizeConfig, useHarrisDetectorConfig, harrisKConfig);
     
     detector_extra = GFTTDetector::create(
-        50, qualityLevel*0.8, minDistance*0.8, blockSize, useHarrisDetector, harrisK);
+        50, qualityLevelConfig*0.8, minDistanceConfig*0.8, blockSizeConfig, useHarrisDetectorConfig, harrisKConfig);
 }
 
 // Функция инициализации первого кадра
@@ -61,8 +61,8 @@ void initFirstFrame(bool cameraInUse, VideoCapture& capture, string filepath,
         if (maxCorners > 50)
         {
             maxCorners *= 0.98;
-            detector = GFTTDetector::create(maxCorners, qualityLevel, minDistance,
-                                           blockSize, useHarrisDetector, harrisK);
+            detector = GFTTDetector::create(maxCorners, qualityLevel, minDistanceConfig,
+                                           blockSizeConfig, useHarrisDetectorConfig, harrisKConfig);
         }
     }
     
@@ -112,8 +112,8 @@ void initFirstFrame(UMat& uOldGray, UMat& uP0, vector<Point2f>& p0,
         if (maxCorners > 50)
         {
             maxCorners *= 0.98;
-            detector = GFTTDetector::create(maxCorners, qualityLevel, minDistance,
-                                           blockSize, useHarrisDetector, harrisK);
+            detector = GFTTDetector::create(maxCorners, qualityLevel, minDistanceConfig,
+                                           blockSizeConfig, useHarrisDetectorConfig, harrisK);
         }
     }
     

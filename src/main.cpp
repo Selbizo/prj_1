@@ -1,4 +1,3 @@
-/*
 #include <opencv2/core/ocl.hpp>
 #include "basicFunctions.h"
 #include "stabilizationFunctions.h"
@@ -120,14 +119,14 @@ int main()
 	// Детектор для поиска характерных точек - замена на CPU версию
 	// OpenCV OCL не имеет прямых аналогов для всех CUDA функций
 	Ptr<FeatureDetector> detector = GFTTDetector::create(
-		maxCorners, qualityLevel, minDistance, blockSize, useHarrisDetector, harrisK);
+		maxCornersConfig, qualityLevelConfig, minDistanceConfig, blockSizeConfig, useHarrisDetectorConfig, harrisKConfig);
 		
 	Ptr<FeatureDetector> detector_small = GFTTDetector::create(
-		20, qualityLevel*1.5, minDistance*1.5, blockSize, useHarrisDetector, harrisK);
+		20, qualityLevelConfig*1.5, minDistanceConfig*1.5, blockSizeConfig, useHarrisDetectorConfig, harrisKConfig);
 	
 	// Использование CPU версии PyrLK
 	TermCriteria termcrit(TermCriteria::COUNT|TermCriteria::EPS, 20, 0.03);
-	Size winSizeLK(winSize, winSize);
+	Size winSizeLK(winSizeConfig, winSizeConfig);
 
 	Mat oldFrame, oldGray, err;
 	
@@ -241,16 +240,16 @@ int main()
 	UMat uFrameStabilized(Size(a, b), CV_8UC3, USAGE_DEFAULT);
 
 	UMat uOldFrame(Size(a, b), CV_8UC3), uFrame(Size(a, b), CV_8UC3), uFrameShowOrig(Size(a, b), CV_8UC3),
-		uGray(Size(a/compression, b/compression), CV_8UC1),
-		uCompressed(Size(a/compression, b/compression), CV_8UC3);
+		uGray(Size(a/compressionConfig, b/compressionConfig), CV_8UC1),
+		uCompressed(Size(a/compressionConfig, b/compressionConfig), CV_8UC3);
 
-	UMat uOldGray(Size(a/compression, b/compression), CV_8UC1), 
-		uOldCompressed(Size(a/compression, b/compression), CV_8UC3);
+	UMat uOldGray(Size(a/compressionConfig, b/compressionConfig), CV_8UC1), 
+		uOldCompressed(Size(a/compressionConfig, b/compressionConfig), CV_8UC3);
 	UMat uToShow(Size(a, b), CV_8UC3);
 
 	UMat uRoiGray;
 
-	UMat UMatTemp_(Size(a/compression, b/compression), CV_8UC1);
+	UMat UMatTemp_(Size(a/compressionConfig, b/compressionConfig), CV_8UC1);
 	Rect roi;
 	roi.x = a * ((1.0 - framePart) / 2.0);
 	roi.y = b * ((1.0 - framePart) / 2.0);
@@ -306,17 +305,17 @@ int main()
 	}
 
 	// Маска для нахождения точек
-	Mat maskSearch = Mat::zeros(cv::Size(a/compression, b/compression), CV_8U);
-	cv::rectangle(maskSearch, Rect(a*(1.0-0.9)/compression/2, b*(1.0-0.9)/compression/2, 
-		a*0.9, b*0.9/compression), cv::Scalar(255), cv::FILLED);
-	cv::rectangle(maskSearch, Rect(a*(1.0-0.4)/compression/2, b*(1.0-0.4)/compression/2, 
-		a*0.4, b*0.4/compression), cv::Scalar(0), cv::FILLED);
+	Mat maskSearch = Mat::zeros(cv::Size(a/compressionConfig, b/compressionConfig), CV_8U);
+	cv::rectangle(maskSearch, Rect(a*(1.0-0.9)/compressionConfig/2, b*(1.0-0.9)/compressionConfig/2, 
+		a*0.9, b*0.9/compressionConfig), cv::Scalar(255), cv::FILLED);
+	cv::rectangle(maskSearch, Rect(a*(1.0-0.4)/compressionConfig/2, b*(1.0-0.4)/compressionConfig/2, 
+		a*0.4, b*0.4/compressionConfig), cv::Scalar(0), cv::FILLED);
 	UMat uMaskSearch;
 	maskSearch.copyTo(uMaskSearch);
 
-	Mat maskSearchSmall = Mat::zeros(cv::Size(a/compression, b/compression), CV_8U);
-	cv::rectangle(maskSearchSmall, Rect(a*(1.0-0.3)/compression/2, b*(1.0-0.3)/compression/2, 
-		max(a,b)*0.3/compression, max(a,b)*0.3/compression), cv::Scalar(255), cv::FILLED);
+	Mat maskSearchSmall = Mat::zeros(cv::Size(a/compressionConfig, b/compressionConfig), CV_8U);
+	cv::rectangle(maskSearchSmall, Rect(a*(1.0-0.3)/compressionConfig/2, b*(1.0-0.3)/compressionConfig/2, 
+		max(a,b)*0.3/compressionConfig, max(a,b)*0.3/compressionConfig), cv::Scalar(255), cv::FILLED);
 	UMat uMaskSearchSmall;
 	maskSearchSmall.copyTo(uMaskSearchSmall);
 	UMat uMaskSearchSmallRoi;
@@ -358,8 +357,8 @@ int main()
 	// Начало работы алгоритма
 	while (true) {
 		initFirstFrame(cameraInUse, capture, filepath, init_frame_id, oldFrame, uOldFrame, uOldCompressed, uOldGray, 
-			uP0, p0, qualityLevel, harrisK, maxCorners, detector, transforms, 
-			kSwitch, a, b, compression, uMaskSearch, stabPossible);
+			uP0, p0, qualityLevelConfig, harrisKConfig, maxCornersConfig, detector, transforms, 
+			kSwitch, a, b, compressionConfig, uMaskSearch, stabPossible);
 		imshow("InitFirstFrame", oldFrame);
 		waitKey(1);
 		cout << "Initial Corners: " << p0.size() << endl;
@@ -385,12 +384,12 @@ int main()
 			p0.clear();
 			p0 = good_new;
 			
-			if (p1.size() < double(maxCorners*5/7) && (abs(meanP0.x-a/2) < a/6 || abs(meanP0.y-b/2) < b/6))
+			if (p1.size() < double(maxCornersConfig*5/7) && (abs(meanP0.x-a/2) < a/6 || abs(meanP0.y-b/2) < b/6))
 			{
 				movementKalman[1].getTransformBoost(TSearchPoints, a, b, rng);
 				cv::warpAffine(uMaskSearchSmall, uMaskSearchSmallRoi, TSearchPoints, uMaskSearchSmall.size());
 				addFramePoints(uGray, p0, detector_small, uMaskSearchSmallRoi);
-				removeFramePoints(p0, minDistance*0.8);
+				removeFramePoints(p0, minDistanceConfig*0.8);
 			}
 			
 			//uGray.copyTo(uOldGray);
@@ -427,15 +426,15 @@ int main()
 		startGPUPing = clock();
 		if (stabPossible) {
 			
-			cv::resize(uFrame, uCompressed, Size(a/compression, b/compression), 0.0, 0.0, INTER_AREA);
+			cv::resize(uFrame, uCompressed, Size(a/compressionConfig, b/compressionConfig), 0.0, 0.0, INTER_AREA);
 			cv::cvtColor(uCompressed, uGray, COLOR_BGR2GRAY);
 		}
 
-		if ((p0.size() < maxCorners*1/5) || !stabPossible)
+		if ((p0.size() < maxCornersConfig*1/5) || !stabPossible)
 		{
-			if (maxCorners > 200) maxCorners *= 0.95;
-			if (p0.size() < maxCorners*1/4 && stabPossible)
-				detector = GFTTDetector::create(maxCorners, qualityLevel, minDistance, blockSize, useHarrisDetector, harrisK);
+			if (maxCornersConfig > 200) maxCornersConfig *= 0.95;
+			if (p0.size() < maxCornersConfig*1/4 && stabPossible)
+				detector = GFTTDetector::create(maxCornersConfig, qualityLevelConfig, minDistanceConfig, blockSizeConfig, useHarrisDetectorConfig, harrisKConfig);
 			
 			p0.clear();
 			p1.clear();
@@ -447,40 +446,40 @@ int main()
 				cv::rectangle(writerFrame, Rect(a, b, a, b), cv::Scalar(0,0,0), cv::FILLED);
 			}
 			
-			cv::resize(uFrame, uCompressed, Size(a/compression, b/compression), 0.0, 0.0, INTER_AREA);
+			cv::resize(uFrame, uCompressed, Size(a/compressionConfig, b/compressionConfig), 0.0, 0.0, INTER_AREA);
 			cv::cvtColor(uCompressed, uGray, COLOR_BGR2GRAY);
 
 			if (frameCount % 10 == 1 && !stabPossible)
 			{
 				initFirstFrame(cameraInUse, capture, filepath, frameCount, oldFrame, uOldFrame, uOldCompressed, uOldGray, 
-					uP0, p0, qualityLevel, harrisK, maxCorners, detector, transforms,
-					kSwitch, a, b, compression, uMaskSearch, stabPossible);
+					uP0, p0, qualityLevelConfig, harrisKConfig, maxCornersConfig, detector, transforms,
+					kSwitch, a, b, compressionConfig, uMaskSearch, stabPossible);
 			} 
 			else
 			{
 				initFirstFrameZero(oldFrame, uOldFrame, uOldGray, uOldCompressed, 
-					uP0, p0, qualityLevel, harrisK, maxCorners, detector, transforms, 
-					kSwitch, a, b, compression, uMaskSearch, stabPossible);
+					uP0, p0, qualityLevelConfig, harrisKConfig, maxCornersConfig, detector, transforms, 
+					kSwitch, a, b, compressionConfig, uMaskSearch, stabPossible);
 			}
 
 			if (stabPossible) {
 				calcOpticalFlowPyrLK(uOldGray, uGray, p0, p1, status, errFloat, 
-						winSizeLK, maxLevel, termcrit, 0, 0.001);
+						winSizeLK, maxLevelConfig, termcrit, 0, 0.001);
 			}
 		}
 		else if (stabPossible) {
 			calcOpticalFlowPyrLK(uOldGray, uGray, p0, p1, status, errFloat, 
-					winSizeLK, maxLevel, termcrit, 0, 0.001);
+					winSizeLK, maxLevelConfig, termcrit, 0, 0.001);
 		}
 
-		if ((p1.size() > maxCorners*4/5) && stabPossible) {
-			maxCorners *= 1.02;
-			maxCorners += 1;
-			detector = GFTTDetector::create(maxCorners, qualityLevel, minDistance, blockSize, useHarrisDetector, harrisK);
+		if ((p1.size() > maxCornersConfig*4/5) && stabPossible) {
+			maxCornersConfig *= 1.02;
+			maxCornersConfig += 1;
+			detector = GFTTDetector::create(maxCornersConfig, qualityLevelConfig, minDistanceConfig, blockSizeConfig, useHarrisDetectorConfig, harrisKConfig);
 		}
 		
 		if (stabPossible) {
-			getBiasAndRotation(p0, p1, d, meanP0, transforms, T, compression);
+			getBiasAndRotation(p0, p1, d, meanP0, transforms, T, compressionConfig);
 			iirAdaptive(transforms, tauStab, roi, a, b, c, kSwitch, movement, movementKalman);
 
 			kf.update((cv::Mat_<double>(3, 1) << transforms[1].dx, transforms[1].dy, transforms[1].da));
@@ -524,10 +523,10 @@ int main()
 
 				if (p0.size() > 0)
 					for (uint i = 0; i < p0.size(); i++)
-						circle(writerFrame, Point2f(p1[i].x*compression + a, p1[i].y*compression), 3, colors[i], -1);
+						circle(writerFrame, Point2f(p1[i].x*compressionConfig + a, p1[i].y*compressionConfig), 3, colors[i], -1);
 								
 				showServiceInfo(writerFrame, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movement, movementKalman,
-					tauStab, kSwitch, framePart, p0.size(), maxCorners, seconds, secondsGPUPing, secondsFullPing, 
+					tauStab, kSwitch, framePart, p0.size(), maxCornersConfig, seconds, secondsGPUPing, secondsFullPing, 
 					a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab, fontFace, fontScale, colorGREEN);
 
 				if (recordEnable)
@@ -544,7 +543,7 @@ int main()
 				uWriterFrameToShow.copyTo(writerFrameToShow);
 
 				showServiceInfoSmall(writerFrameToShow, qWiener, nsr, wiener, threadwiener, stabPossible, 
-					transforms, movementKalman, tauStab, kSwitch, framePart, p0.size(), maxCorners,
+					transforms, movementKalman, tauStab, kSwitch, framePart, p0.size(), maxCornersConfig,
 					seconds, secondsGPUPing, secondsFullPing, a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab,
 					fontFace, fontScale, colorGREEN);
 
@@ -578,7 +577,7 @@ int main()
 				uFrameOut.copyTo(writerFrame(Rect(0, b, a, b)));
 
 				showServiceInfo(writerFrame, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movement, movementKalman, 
-					tauStab, kSwitch, framePart, p0.size(), maxCorners, seconds, secondsGPUPing, secondsFullPing, 
+					tauStab, kSwitch, framePart, p0.size(), maxCornersConfig, seconds, secondsGPUPing, secondsFullPing, 
 					a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab, fontFace, fontScale, colorRED);
 				
 				if (recordEnable)
@@ -595,7 +594,7 @@ int main()
 				uWriterFrameToShow.copyTo(writerFrameToShow);
 				
 				showServiceInfoSmall(writerFrameToShow, qWiener, nsr, wiener, threadwiener, stabPossible, 
-					transforms, movementKalman, tauStab, kSwitch, framePart, p0.size(), maxCorners,
+					transforms, movementKalman, tauStab, kSwitch, framePart, p0.size(), maxCornersConfig,
 					seconds, secondsGPUPing, secondsFullPing, a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab,
 					fontFace, fontScale, colorRED);
 
@@ -612,347 +611,4 @@ int main()
 	outputFile.close();
 	capture.release();
 	return 0;
-}
-*/
-/*
-#include <opencv2/opencv.hpp>
-#include <opencv2/core/ocl.hpp>
-#include <iostream>
-#include <fstream>
-
-int main() {
-    std::cout << "=== OpenCL Check for Banana Pi CM4 ===\n" << std::endl;
-    
-    // 1. Базовая информация
-    std::cout << "1. OpenCV Information:" << std::endl;
-    std::cout << "   Version: " << CV_VERSION << std::endl;
-    std::cout << "   Build info: " << cv::getBuildInformation() << std::endl;
-    
-    // 2. Проверка OpenCL
-    std::cout << "\n2. OpenCL Status:" << std::endl;
-    bool haveOpenCL = cv::ocl::haveOpenCL();
-	cv::ocl::setUseOpenCL(true);
-    std::cout << "   Have OpenCL: " << (haveOpenCL ? "YES" : "NO") << std::endl;
-
-    if (haveOpenCL) {
-        bool useOpenCL = cv::ocl::useOpenCL();
-        std::cout << "   Use OpenCL: " << (useOpenCL ? "YES" : "NO") << std::endl;
-		useOpenCL = cv::ocl::useOpenCL();
-        std::cout << "\nAfter turning ON\n   Use OpenCL: " << (useOpenCL ? "YES" : "NO") << std::endl;
-        cv::ocl::Context ctx = cv::ocl::Context::getDefault();
-        if (!ctx.empty()) {
-            cv::ocl::Device dev = cv::ocl::Device::getDefault();
-            std::cout << "   Device: " << dev.name() << std::endl;
-            std::cout << "   Vendor: " << dev.vendorName() << std::endl;
-            std::cout << "   Version: " << dev.driverVersion() << std::endl;
-            std::cout << "   Type: ";
-            switch (dev.type()) {
-                case cv::ocl::Device::TYPE_CPU: std::cout << "CPU"; break;
-                case cv::ocl::Device::TYPE_GPU: std::cout << "GPU"; break;
-                case cv::ocl::Device::TYPE_ACCELERATOR: std::cout << "Accelerator"; break;
-                default: std::cout << "Unknown";
-            }
-            std::cout << std::endl;
-            
-            // Проверить, ARM ли это
-            std::string name = dev.name();
-            if (name.find("Mali") != std::string::npos ||
-                name.find("ARM") != std::string::npos ||
-                name.find("VideoCore") != std::string::npos) {
-                std::cout << "   *** ARM GPU detected! ***" << std::endl;
-            }
-        }
-    }
-    
-    // 3. Тест производительности UMat
-    std::cout << "\n3. UMat Performance Test:" << std::endl;
-    
-    cv::UMat testImage(1080, 1920, CV_8UC3);
-    cv::randu(testImage, 0, 255);
-    
-    cv::UMat result;
-    
-    // Тест с OpenCL
-    if (cv::ocl::useOpenCL()) {
-        auto start = std::chrono::high_resolution_clock::now();
-        for (int i = 0; i < 10; ++i) {
-            cv::GaussianBlur(testImage, result, cv::Size(5, 5), 1.0);
-        }
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        std::cout << "   OpenCL GaussianBlur (10x): " << duration.count() << " ms" << std::endl;
-    }
-    
-    // Тест без OpenCL
-    cv::ocl::setUseOpenCL(false);
-    cv::Mat cpuImage; testImage.copyTo(cpuImage);
-    cv::Mat cpuResult;
-    
-    auto start = std::chrono::high_resolution_clock::now();
-    for (int i = 0; i < 10; ++i) {
-        cv::GaussianBlur(cpuImage, cpuResult, cv::Size(5, 5), 1.0);
-    }
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    std::cout << "   CPU GaussianBlur (10x): " << duration.count() << " ms" << std::endl;
-    
-    // Вернуть настройки
-    cv::ocl::setUseOpenCL(true);
-    
-    // 4. Проверить конкретные операции из вашего кода
-    std::cout << "\n4. Testing Your Pipeline Operations:" << std::endl;
-    
-    cv::UMat src(540, 960, CV_8UC3, cv::Scalar(100, 150, 200));
-    cv::UMat compressed, gray;
-    
-    start = std::chrono::high_resolution_clock::now();
-    cv::resize(src, compressed, cv::Size(480, 270), 0, 0, cv::INTER_AREA);
-    end = std::chrono::high_resolution_clock::now();
-    std::cout << "   resize: " 
-              << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() 
-              << " μs" << std::endl;
-    
-    start = std::chrono::high_resolution_clock::now();
-    cv::cvtColor(compressed, gray, cv::COLOR_BGR2GRAY);
-    end = std::chrono::high_resolution_clock::now();
-    std::cout << "   cvtColor: " 
-              << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() 
-              << " μs" << std::endl;
-    
-    // 5. Проверить optical flow (если доступно)
-    std::cout << "\n5. Optical Flow Test:" << std::endl;
-    
-    cv::UMat prevGray(270, 480, CV_8UC1);
-    cv::UMat currGray(270, 480, CV_8UC1);
-    cv::randu(prevGray, 0, 255);
-    cv::randu(currGray, 0, 255);
-    
-    std::vector<cv::Point2f> prevPts, nextPts;
-    std::vector<uchar> status;
-    std::vector<float> err;
-    
-    // Генерировать точки
-    for (int i = 0; i < 100; ++i) {
-        prevPts.push_back(cv::Point2f(rand() % 480, rand() % 270));
-    }
-    
-    start = std::chrono::high_resolution_clock::now();
-    cv::calcOpticalFlowPyrLK(prevGray, currGray, prevPts, nextPts, 
-                             status, err, cv::Size(21, 21), 3);
-    end = std::chrono::high_resolution_clock::now();
-    std::cout << "   calcOpticalFlowPyrLK: " 
-              << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() 
-              << " μs" << std::endl;
-    
-    std::cout << "\n=== Test Complete ===" << std::endl;
-    
-    return 0;
-}*/
-
-
-
-
-#include <opencv2/opencv.hpp>
-#include <thread>
-#include <atomic>
-#include <queue>
-#include <iostream>
-#include <string>
-#include <chrono>
-
-
-#include "ConfigVideoStab.h"
-
-using namespace std;
-using namespace cv;
-
-class SimpleVideoProcessor {
-private:
-    // Очереди для передачи данных между потоками
-    std::queue<cv::Mat> rawFrameQueue;      // Для исходных кадров
-    std::queue<cv::Mat> processedFrameQueue; // Для обработанных кадров
-    std::queue<std::pair<cv::Mat, cv::Mat>> displayQueue; // Для отображения (оригинал + результат)
-    
-    // Мьютексы для каждой очереди
-    std::mutex rawQueueMutex;
-    std::mutex processedQueueMutex;
-    std::mutex displayQueueMutex;
-    
-    std::atomic<bool> running{true};
-    std::atomic<int> currentFrameId{0};
-    std::string filepath;
-    int totalFrames;
-    int processedFrames = 0;
-
-public:
-    SimpleVideoProcessor(const std::string& path, int startFrame = 0, int framesCount = 10000) 
-        : filepath(path), currentFrameId(startFrame), totalFrames(framesCount) {
-        
-        cv::UMat testImage;
-        loadImage(testImage, startFrame, filepath);
-        if (testImage.empty()) {
-            std::cerr << "Не удалось загрузить начальный кадр!" << std::endl;
-        }
-    }
-    
-    void loadImage(cv::UMat& image_color, int frame_id, std::string filepath) {
-        char file[200];
-        sprintf(file, "image_0/%06d.png", frame_id);
-        std::string filename = filepath + std::string(file);
-        image_color = cv::imread(filename, IMREAD_COLOR).getUMat(ACCESS_READ);
-        
-        if (image_color.empty()) {
-            cerr << "Failed to load image: " << filename << endl;
-        }
-    }
-    
-    void run() {
-        // 1. Поток захвата кадров (загрузки изображений)
-        std::thread captureThread([this]() {
-            while (running && currentFrameId.load() < totalFrames) {
-                cv::UMat frame_umat;
-                loadImage(frame_umat, currentFrameId.load(), filepath);
-                
-                if (frame_umat.empty()) {
-                    running = false;
-                    break;
-                }
-                
-                cv::Mat frame = frame_umat.getMat(ACCESS_READ).clone();
-                
-                {
-                    std::lock_guard<std::mutex> lock(rawQueueMutex);
-                    if (rawFrameQueue.size() < 10) { // Увеличиваем буфер
-                        rawFrameQueue.push(frame);
-                    }
-                }
-                
-                currentFrameId++;
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            }
-            
-            running = false;
-            cout << "Capture thread finished." << endl;
-        });
-        
-        // 2. Поток обработки изображений
-        std::thread processThread([this]() {
-            
-            
-            while (running || !rawFrameQueue.empty()) {
-                cv::Mat frame;
-                
-                // Извлечение кадра из очереди сырых данных
-                {
-                    std::lock_guard<std::mutex> lock(rawQueueMutex);
-                    if (!rawFrameQueue.empty()) {
-                        frame = rawFrameQueue.front();
-                        rawFrameQueue.pop();
-                    }
-                }
-                
-                if (frame.empty()) {
-                    if (running) {
-						cout << "rawQueue is empty" << endl;
-                        std::this_thread::sleep_for(std::chrono::milliseconds(30));
-                        continue;
-                    } else {
-						break;
-                    }
-                }
-                
-				// Обработка изображения
-                cv::Mat blurred, result;
-                cv::GaussianBlur(frame, result, cv::Size(31, 31), 11.0);
-
-                // Помещаем пару (оригинал + результат) в очередь отображения
-                {
-                    std::lock_guard<std::mutex> lock(displayQueueMutex);
-                    displayQueue.push({frame.clone(), result.clone()});
-                }
-                
-                processedFrames++;
-            }
-            
-            cout << "Processing thread finished. Processed frames: " << processedFrames << endl;
-        });
-        
-        // 3. Поток отображения
-        std::thread displayThread([this]() {
-            int displayedFrames = 0;
-            
-            while (running || !displayQueue.empty()) {
-                cv::Mat original, result;
-                
-                // Извлечение данных для отображения
-                {
-                    std::lock_guard<std::mutex> lock(displayQueueMutex);
-                    if (!displayQueue.empty()) {
-                        auto pair = displayQueue.front();
-                        original = pair.first;
-                        result = pair.second;
-                        displayQueue.pop();
-                        displayedFrames++;
-                    }
-                }
-                
-                if (original.empty() || result.empty()) {
-                    if (running) {
-                        //std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                        continue;
-                    } else {
-                        break;
-                    }
-                }
-                
-                // Создание промежуточных изображений для отображения
-
-                // Добавление информации о кадре
-                string frameInfo1 = "Frame: " + to_string(currentFrameId.load());
-                string frameInfo2 = "Frame: " + to_string(processedFrames);
-                cv::putText(original, frameInfo1, cv::Point(10, 30), 
-                           cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
-                cv::putText(result, frameInfo2, cv::Point(10, 30), 
-                           cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 20, 255), 2);
-
-                
-                // Отображение всех окон
-                cv::imshow("Original", original);
-                cv::imshow("Result", result);
-                
-                // Обработка нажатий клавиш
-                int key = cv::waitKey(1);
-                if (key == 27) { // ESC
-                    running = false;
-                    break;
-                } else if (key == 's') { // Пример: сохранение по нажатию 's'
-                    cv::imwrite("saved_frame_" + to_string(displayedFrames) + ".png", result);
-                    cout << "Frame saved: saved_frame_" << displayedFrames << ".png" << endl;
-                } else if (key == 'p') { // Пауза по нажатию 'p'
-                    cv::waitKey(0);
-                }
-            }
-            
-            cout << "Display thread finished. Displayed frames: " << displayedFrames << endl;
-            cv::destroyAllWindows();
-        });
-        
-        // Ожидание завершения всех потоков
-        captureThread.join();
-        processThread.join();
-        displayThread.join();
-        
-        cout << "All threads finished successfully." << endl;
-    }
-};
-
-int main() {
-    // Укажите путь к папке с кадрами
-    //string filepath = "/path/to/your/frames/folder/";
-    
-    // Создаем процессор, указывая путь, начальный кадр и общее количество кадров
-    SimpleVideoProcessor processor(filepath, 0, 10000);
-    processor.run();
-    
-    return 0;
 }
