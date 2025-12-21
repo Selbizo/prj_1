@@ -32,7 +32,7 @@ const Scalar colorWHITE(255, 255, 255);
 const Scalar colorBLACK(0, 0, 0);
 
 // Настройки системы
-//const bool multiScreen = true;
+const bool multiScreen = true;
 const bool recordEnable = false;
 const int compressionConfig = 1; // Сжатие для обработки
 const int outputResolution = 720; // Разрешение вывода
@@ -88,23 +88,31 @@ struct TransformParam {
     }
     
     void print() const {
-        cout << "Transform: dx=" << dx << " dy=" << dy << " da=" << da * RAD_TO_DEG << " deg" << endl;
+        cout << "TransformPrint: dx=" << dx << " dy=" << dy << " da=" << da * RAD_TO_DEG << " deg" << endl;
+    }
+    string printString() const {
+        //cout << "Transform: dx=" << dx << " dy=" << dy << " da=" << da * RAD_TO_DEG << " deg" << endl;
+        string str = "Transform: dx= " + to_string(dx) + 
+                                 " dy= " + to_string(dy) + 
+                                 " da= " + to_string(da) +  "\n";
+        return str; 
     }
 };
 
 struct FrameData {
-    UMat frame;
-    UMat gray;
+    Mat frame;
+    Mat gray;
     vector<Point2f> points;
     TransformParam transformSKO;
     TransformParam transformFirstDerivative;
     TransformParam transform;
 
-    Mat stabilizationMatrix;
+    //Mat stabilizationMatrix;
     int frameId;
     double timestamp;
     
-    FrameData() : frameId(0), timestamp(0), stabilizationMatrix(Mat::zeros(2, 3, CV_64F)) {}
+    // FrameData() : frameId(0), timestamp(0), stabilizationMatrix(Mat::zeros(2, 3, CV_64F)) {}
+    FrameData() : frameId(0), timestamp(0) {}
 };
 
 class ThreadSafeQueue {
@@ -149,94 +157,6 @@ public:
     }
 };
 
-// ========================= ФИЛЬТР КАЛМАНА =========================
-
-class KalmanFilterCV {
-private:
-    Mat A, C, Q, R, P, K, I;
-    Mat x_hat;
-    int state_dim, meas_dim;
-    double dt;
-    bool initialized;
-    
-public:
-    KalmanFilterCV(double _dt, int state_size = 9, int meas_size = 3) 
-        : dt(_dt), state_dim(state_size), meas_dim(meas_size), initialized(false) {
-        
-        // Матрица состояния (позиция, скорость, ускорение для X, Y, угла)
-        A = Mat::eye(state_dim, state_dim, CV_64F);
-        for (int i = 0; i < 3; i++) {
-            A.at<double>(i, i+3) = dt;
-            A.at<double>(i+3, i+6) = dt;
-        }
-        
-        // Матрица измерений (измеряем только позицию для X, Y, угла)
-        C = Mat::zeros(meas_dim, state_dim, CV_64F);
-        C.at<double>(0, 0) = 1.0;  // X позиция
-        C.at<double>(1, 1) = 1.0;  // Y позиция
-        C.at<double>(2, 2) = 1.0;  // угол позиция
-        
-        // Ковариационные матрицы
-        Q = Mat::eye(state_dim, state_dim, CV_64F) * 0.001;
-        R = Mat::eye(meas_dim, meas_dim, CV_64F) * 1.0;
-        P = Mat::eye(state_dim, state_dim, CV_64F) * 10.0;
-        
-        I = Mat::eye(state_dim, state_dim, CV_64F);
-        x_hat = Mat::zeros(state_dim, 1, CV_64F);
-    }
-    
-    void init(const Mat& x0) {
-        if (x0.rows != state_dim || x0.cols != 1) {
-            cerr << "Kalman init: wrong state dimension" << endl;
-            return;
-        }
-        x0.copyTo(x_hat);
-        initialized = true;
-        cout << "Kalman filter initialized" << endl;
-    }
-    
-    void predict() {
-        if (!initialized) {
-            cerr << "Kalman filter not initialized for prediction" << endl;
-            return;
-        }
-        x_hat = A * x_hat;
-        P = A * P * A.t() + Q;
-    }
-    
-    void update(const Mat& measurement) {
-        if (!initialized) {
-            cerr << "Kalman filter not initialized for update" << endl;
-            return;
-        }
-        
-        if (measurement.rows != meas_dim || measurement.cols != 1) {
-            cerr << "Kalman update: wrong measurement dimension" << endl;
-            return;
-        }
-        
-        // Коррекция
-        Mat temp = C * P * C.t() + R;
-        if (temp.empty() || determinant(temp) == 0) {
-            cerr << "Kalman update: singular matrix" << endl;
-            return;
-        }
-        
-        K = P * C.t() * temp.inv();
-        x_hat = x_hat + K * (measurement - C * x_hat);
-        P = (I - K * C) * P;
-    }
-    
-    Mat getState() const { return x_hat.clone(); }
-    Mat getPosition() const { 
-        if (state_dim >= 3) {
-            return x_hat.rowRange(0, 3).clone();
-        }
-        return Mat();
-    }
-    bool isInitialized() const { return initialized; }
-};
-
 // ========================= ОСНОВНЫЕ ФУНКЦИИ =========================
 
 class VideoStabilizer {
@@ -246,18 +166,13 @@ private:
     ThreadSafeQueue processedFramesQueue;
     ThreadSafeQueue displayQueue;
     
-    // Потоки обработки
-    vector<thread> workers;
-    
+
     
     // Общие ресурсы
     mutex resourcesMutex;
     Ptr<FeatureDetector> detector;
-    KalmanFilterCV kalmanFilter;
     
     // Параметры стабилизации
-    TransformParam currentTransform;
-    TransformParam smoothedTransform;
     double tauStab;
     double kSwitch;
     double framePart;
@@ -275,18 +190,20 @@ private:
     atomic<bool> debugMode;
     
 public:
+    // Потоки обработки
+    vector<thread> workers;
     atomic<bool> running;
+
     VideoStabilizer() 
         : running(false), 
           tauStab(100.0), 
           kSwitch(0.01), 
           framePart(0.8),
-          fps(0),
+          fps(10),
           processingTime(0),
           trackedPoints(0),
           framesProcessed(0),
-          debugMode(true),
-          kalmanFilter(1.0/30.0) {
+          debugMode(false) {
         
         // Инициализация детектора
         detector = GFTTDetector::create(
@@ -389,7 +306,7 @@ void captureThread(bool useCamera) {
         }
     } else {
         // Для режима изображений загружаем первое изображение для определения размеров
-        UMat firstFrame;
+        Mat firstFrame;
         loadImage(firstFrame, 0, filepath);
         
         if (firstFrame.empty()) {
@@ -431,15 +348,15 @@ void captureThread(bool useCamera) {
     int frameId = 0;
     auto lastFpsTime = chrono::steady_clock::now();
     int frameCount = 0;
-    const int MAX_QUEUE_SIZE = 10;
+    const int MAX_QUEUE_SIZE = 5;
     
     while (running) {
         // Ограничим размер очереди
         if (rawFramesQueue.size() > MAX_QUEUE_SIZE) {
-            this_thread::sleep_for(chrono::milliseconds(10));
+            this_thread::sleep_for(chrono::milliseconds(50));
             continue;
         }
-        
+        if (rawFramesQueue.size() <= MAX_QUEUE_SIZE) {
         FrameData frameData;
         frameData.frameId = frameId++;
         
@@ -452,12 +369,12 @@ void captureThread(bool useCamera) {
             frameRead = cap.read(frame);
             if (!frameRead) {
                 cerr << "Failed to read frame from camera" << endl;
-                this_thread::sleep_for(chrono::milliseconds(100));
+                this_thread::sleep_for(chrono::milliseconds(10));
                 continue;
             }
         } else {
             // Режим чтения изображений из файлов
-            loadImage(frameData.frame, frameData.frameId, filepath);
+            loadImage(frameData.frame, frameData.frameId%3+1, filepath);
             
             if (frameData.frame.empty()) {
                 // Если изображение не найдено, пробуем следующий индекс
@@ -473,7 +390,7 @@ void captureThread(bool useCamera) {
                 frameData.frameId++; // Увеличиваем ID, если загрузили следующий кадр
             }
             
-            // Конвертируем UMat в Mat для дальнейшей обработки
+            // Конвертируем Mat в Mat для дальнейшей обработки
             frameData.frame.copyTo(frame);
             frameRead = !frame.empty();
         }
@@ -509,7 +426,7 @@ void captureThread(bool useCamera) {
         }
         
         // Создаем уменьшенную серую версию для обработки
-        UMat compressed, gray;
+        Mat compressed, gray;
         Size compressedSize(a / compressionConfig, b / compressionConfig);
         if (compressedSize.width <= 0) compressedSize.width = 1;
         if (compressedSize.height <= 0) compressedSize.height = 1;
@@ -534,9 +451,9 @@ void captureThread(bool useCamera) {
                      << rawFramesQueue.size() << endl;
             }
         }
-        
+    }
         // Ограничение FPS если нужно
-        this_thread::sleep_for(chrono::milliseconds(50));
+        this_thread::sleep_for(chrono::milliseconds(100));
     }
     
     if (useCamera) {
@@ -548,9 +465,9 @@ void captureThread(bool useCamera) {
     
     // ========================= ПОТОК ДЕТЕКТИРОВАНИЯ ТОЧЕК =========================
     void detectionThread() {
-        vector<Point2f> pointPool;
-        int frameSkipCounter = 0;
-        const int DETECTION_SKIP_FRAMES = 1; // Детектировать каждые 5 кадров
+        
+        //int frameSkipCounter = 0;
+        //const int DETECTION_SKIP_FRAMES = 1; // Детектировать каждые 5 кадров
         
         cout << "Detection thread started" << endl;
         
@@ -568,10 +485,10 @@ void captureThread(bool useCamera) {
                 cerr << "Empty gray frame in detection thread" << endl;
                 continue;
             }
-            
+            // you are here
             // Детектирование точек (не каждый кадр)
-            if (frameSkipCounter || pointPool.size() < maxCornersConfig / 2) {
-                // Маска для поиска точек (центральная область)
+            // if (pointPool.size() < maxCornersConfig / 5 ) {
+            if (frameData.points.size() < maxCornersConfig / 5 ) {
                 Mat mask = Mat::zeros(frameData.gray.size(), CV_8U);
                 int marginX = frameData.gray.cols / 4;
                 int marginY = frameData.gray.rows / 4;
@@ -591,34 +508,31 @@ void captureThread(bool useCamera) {
                 }
                 
                 // Конвертация в Point2f
-                vector<Point2f> newPoints;
+                //vector<Point2f> newPoints;
+
                 for (const auto& kp : keypoints) {
-                    newPoints.push_back(kp.pt);
+                    frameData.points.push_back(kp.pt); // нужно добавить в старые точки
                 }
-                
-                // Добавление в пул (с удалением старых)
-                pointPool.insert(pointPool.end(), newPoints.begin(), newPoints.end());
-                
+                                
                 // Ограничение размера пула
-                if (pointPool.size() > maxCornersConfig * 2) {
-                    pointPool.erase(pointPool.begin(), 
-                                   pointPool.begin() + (pointPool.size() - maxCornersConfig));
+                if (frameData.points.size() > maxCornersConfig * 2) {
+                    frameData.points.erase(frameData.points.begin(), 
+                                   frameData.points.begin() + (frameData.points.size() - maxCornersConfig));
                 }
-                
+                //you are here
                 // Удаление слишком близких точек
-                removeClosePoints(pointPool, minDistanceConfig);
-                
-                if (debugMode && frameData.frameId % 50 == 0) {
+
+                removeFramePoints(frameData.points, minDistanceConfig*0.8);
+
+                if (debugMode && frameData.frameId == 0) {
                     cout << "Detection: found " << keypoints.size() << " keypoints, pool size: " 
-                         << pointPool.size() << endl;
+                         << frameData.points.size() << endl;
                 }
+                trackedPoints = static_cast<int>(frameData.points.size());
             }
             
-            frameSkipCounter++;
+            //frameSkipCounter++;
             
-            // Копируем точки для текущего кадра
-            frameData.points = pointPool;
-            trackedPoints = static_cast<int>(pointPool.size());
             
             auto endTime = chrono::steady_clock::now();
             auto duration = chrono::duration_cast<chrono::microseconds>(endTime - startTime);
@@ -633,7 +547,7 @@ void captureThread(bool useCamera) {
     
     // ========================= ПОТОК ОТСЛЕЖИВАНИЯ ТОЧЕК =========================
     void trackingThread() {
-        UMat prevGray;
+        Mat prevGray;
         vector<Point2f> prevPoints;
         bool firstFrame = true;
         int consecutiveFailures = 0;
@@ -702,42 +616,44 @@ void captureThread(bool useCamera) {
             
             int goodCount = 0;
             for (size_t i = 0; i < status.size(); i++) {
-                if (status[i] && err[i] < 20.0) {
+                if (status[i] && err[i] < 50.0) {
                     goodNew.push_back(nextPoints[i]);
                     goodOld.push_back(prevPoints[i]);
                     goodCount++;
                 }
             }
             
-            if (debugMode && frameData.frameId % 30 == 0) {
+            if (debugMode && frameData.frameId % 1 == 0) {
                 cout << "Tracking: " << goodCount << "/" << status.size() 
                      << " points tracked successfully" << endl;
             }
             
             // Оценка аффинного преобразования
-            if (goodCount >= 4) {
-                Mat transform;
+            if (goodCount >= 6) {
+                Mat T;
                 try {
-                    transform = estimateAffine2D(goodOld, goodNew, noArray(), RANSAC, 3.0);
+                    T = estimateAffine2D(goodOld, goodNew, noArray(), RANSAC, 3.0);
                 } catch (const exception& e) {
                     cerr << "Error in estimateAffine2D: " << e.what() << endl;
-                    transform = Mat();
+                    T = Mat();
                 }
                 
-                if (!transform.empty() && transform.rows == 2 && transform.cols == 3) {
+                if (!T.empty() && T.rows == 2 && T.cols == 3) {
                     // Извлечение параметров трансформации
-                    double dx = transform.at<double>(0, 2) * compressionConfig;
-                    double dy = transform.at<double>(1, 2) * compressionConfig;
-                    double da = atan2(transform.at<double>(1, 0), 
-                                     transform.at<double>(0, 0));
+                    double dx = T.at<double>(0, 2) * compressionConfig;
+                    double dy = T.at<double>(1, 2) * compressionConfig;
+                    double da = atan2(T.at<double>(1, 0), 
+                                     T.at<double>(0, 0));
                     
                     frameData.transformFirstDerivative = TransformParam(dx, dy, da);
+                    //frameData.transformFirstDerivative = TransformParam(0.0, 0.0, 0.1);
                     
                     // Сохраняем матрицу стабилизации
-                    transform.copyTo(frameData.stabilizationMatrix);
+                    //T.copyTo(frameData.stabilizationMatrix);
                     
-                    if (debugMode && frameData.frameId % 50 == 0) {
-                        frameData.transform.print();
+                    if (debugMode && frameData.frameId % 1 == 0) {
+                        //frameData.transform.print();
+                        frameData.transformFirstDerivative.print();
                     }
                 } else {
                     if (debugMode) {
@@ -748,9 +664,9 @@ void captureThread(bool useCamera) {
             } else {
                 if (debugMode && frameData.frameId % 30 == 0) {
                     cout << "Tracking: not enough points for transform (" 
-                         << goodCount << " < 4)" << endl;
+                         << goodCount << " < 6)" << endl;
                 }
-                frameData.transformFirstDerivative = TransformParam(0, 0, 0);
+                frameData.transformFirstDerivative = TransformParam(10, 0, 0);
             }
             
             // Обновляем для следующего кадра
@@ -769,7 +685,7 @@ void captureThread(bool useCamera) {
     
     // ========================= ПОТОК СТАБИЛИЗАЦИИ =========================
     void stabilizationThread() {
-        vector<TransformParam> transformHistory;
+        //vector<TransformParam> transformHistory;
         const int HISTORY_SIZE = 10;
         int framesStabilized = 0;
         
@@ -781,65 +697,70 @@ void captureThread(bool useCamera) {
                 if (!running) break;
                 continue;
             }
-            
-            framesProcessed++;
-            auto startTime = chrono::steady_clock::now();
-            
-            // Добавляем трансформацию в историю
-            transformHistory.push_back(frameData.transform);
-            if (transformHistory.size() > HISTORY_SIZE) {
-                transformHistory.erase(transformHistory.begin());
-            }
-            
-            frameData.transformFirstDerivative;
 
-            iirAdaptive(frameData.transformFirstDerivative, frameData.transform, frameData.transformSKO, 
-                tauStab, roi, a, b, kSwitch);
-
-            // Применяем стабилизацию только если есть сглаженная трансформация
             if (!frameData.frame.empty()) {
                 try {
+                    if (kSwitch < 0.01) 
+                        kSwitch = 0.01;
+                    if (kSwitch < 1.0)
+                    {
+                        kSwitch *= 1.06;
+                        kSwitch += 0.005;
+                    }
+                    else if (kSwitch > 1.0) kSwitch = 1.0;
+                    framesProcessed++;
+                    // auto startTime = chrono::steady_clock::now();
+                    iirAdaptive(frameData.transformFirstDerivative, frameData.transform, frameData.transformSKO, 
+                    tauStab, roi, a, b, kSwitch);
                     // Вычисляем матрицу стабилизации (инверсия сглаженной трансформации)
                     Mat stabMatrix;
-                    frameData.transform.getTransformInvert(stabMatrix);
-                    
+                    frameData.transform.getTransform(stabMatrix);
+                    //frameData.transform.print();
                     // Применяем стабилизацию
-                    UMat stabilizedFrame;
+                    Mat stabilizedFrame;
                     warpAffine(frameData.frame, stabilizedFrame, stabMatrix, frameSize);
-                    
+
                     // Обрезаем по ROI (если ROI валиден)
-                    if (roi.width > 0 && roi.height > 0 && 
+                    if (true || roi.width > 0 && roi.height > 0 && 
                         roi.x >= 0 && roi.y >= 0 &&
                         roi.x + roi.width <= stabilizedFrame.cols &&
                         roi.y + roi.height <= stabilizedFrame.rows) {
                         
-                        UMat croppedFrame = stabilizedFrame(roi);
+                        //Mat croppedFrame = stabilizedFrame(roi);
                         
                         // Масштабируем обратно к исходному размеру
-                        UMat finalFrame;
-                        resize(croppedFrame, finalFrame, frameSize, 0, 0, INTER_LINEAR);
+                        //Mat finalFrame;
+                        //resize(croppedFrame, finalFrame, frameSize, 0, 0, INTER_LINEAR);
+                        //resize(stabilizedFrame, finalFrame, frameSize, 0, 0, INTER_LINEAR);
                         
                         // Сохраняем результат
-                        finalFrame.copyTo(frameData.frame);
+                        //finalFrame.copyTo(frameData.frame);
+                        stabilizedFrame.copyTo(frameData.frame);
                         framesStabilized++;
                     } else {
                         // Если ROI невалиден, используем полный кадр
                         stabilizedFrame.copyTo(frameData.frame);
                     }
+
+                    // auto endTime = chrono::steady_clock::now();
+                    // auto duration = chrono::duration_cast<chrono::microseconds>(endTime - startTime);
+                    putText(stabilizedFrame, frameData.transform.printString(), Point(10, 30),
+                   FONT_HERSHEY_SIMPLEX, 0.7, colorGREEN, 2);
+                    putText(stabilizedFrame, frameData.transformFirstDerivative.printString(), Point(10, 60),
+                   FONT_HERSHEY_SIMPLEX, 0.7, colorGREEN, 2);
+                    imshow("stabilizedFrame", stabilizedFrame);
+                    int key = waitKey(5);
                 } catch (const exception& e) {
                     cerr << "Error in stabilization: " << e.what() << endl;
                     // В случае ошибки оставляем оригинальный кадр
                 }
             }
             
-            if (debugMode && framesProcessed % 100 == 0) {
-                cout << "Stabilized " << framesStabilized << "/" << framesProcessed 
-                     << " frames" << endl;
-            }
-            
-            auto endTime = chrono::steady_clock::now();
-            auto duration = chrono::duration_cast<chrono::microseconds>(endTime - startTime);
-            
+            // if (debugMode && framesProcessed % 100 == 0) {
+            //     cout << "Stabilized " << framesStabilized << "/" << framesProcessed 
+            //          << " frames" << endl;
+            // }
+                        
             // Отправляем для отображения
             displayQueue.push(move(frameData));
         }
@@ -892,9 +813,18 @@ void captureThread(bool useCamera) {
             frameData.frame.copyTo(displayFrame);
             
             // Добавляем информацию о производительности
-            string infoText = format("Frame: %d | FPS: %d | Points: %d | Process: %.1f ms",
+            string infoText = format("Frame: %d | FPS: %d | Points: %d | Process: %.1f ms | kSwitch: %.1f",
                                     frameData.frameId, fps.load(), trackedPoints.load(), 
-                                    processingTime.load());
+                                    processingTime.load(), kSwitch);
+            // string infoTransform = format("dx: %1.1f | dy: %1.1f | da: %1.1f | Process: %1.1f ms",
+            //             frameData.frameId, fps.load(), trackedPoints.load(), 
+            //             processingTime.load());
+            putText(displayFrame, "biases" + frameData.transform.printString(), Point(10, 60),
+                   FONT_HERSHEY_SIMPLEX, 0.7, colorGREEN, 2);
+            putText(displayFrame, "derivarite " + frameData.transformFirstDerivative.printString(), Point(10, 90),
+                   FONT_HERSHEY_SIMPLEX, 0.7, colorGREEN, 2);
+            putText(displayFrame,"SKO " + frameData.transformSKO.printString(), Point(10, 120),
+                   FONT_HERSHEY_SIMPLEX, 0.7, colorGREEN, 2);
             putText(displayFrame, infoText, Point(10, 30),
                    FONT_HERSHEY_SIMPLEX, 0.7, colorGREEN, 2);
             
@@ -907,14 +837,14 @@ void captureThread(bool useCamera) {
             
             
             // Рисуем точки (первые 30 для наглядности)
-            if (!frameData.points.empty()) {
-                int pointsToShow = min(30, static_cast<int>(frameData.points.size()));
+            if (true || !frameData.points.empty()) {
+                int pointsToShow = min(200, static_cast<int>(frameData.points.size()));
                 for (int i = 0; i < pointsToShow; i++) {
                     Point2f pt = frameData.points[i];
                     // Масштабируем координаты точек обратно к исходному размеру
                     Point scaledPt(static_cast<int>(pt.x * compressionConfig),
                                    static_cast<int>(pt.y * compressionConfig));
-                    circle(displayFrame, scaledPt, 3, colorBLUE, -1);
+                    circle(displayFrame, scaledPt, 5, colorBLUE, -1);
                 }
             }
             
@@ -942,7 +872,7 @@ void captureThread(bool useCamera) {
             int key = waitKey(1);
             if (key == 27 || key == 'q') { // ESC или Q
                 cout << "Exit requested by user" << endl;
-                running = false;                
+                running = false;
                 break;
             } else if (key == ' ') { // Пробел - пауза
                 cout << "Paused. Press any key to continue..." << endl;
@@ -966,7 +896,7 @@ void captureThread(bool useCamera) {
     }
     
     // ========================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =========================
-    
+    // ========================= ДЛЯ ЗАХВАТА ИЗОБРАЖЕНИЯ =========================
     void loadImage(cv::Mat& image_color, int frame_id, std::string filepath)
     {
         char file[200];
@@ -980,24 +910,51 @@ void captureThread(bool useCamera) {
         }
     }
 
-    void loadImage(cv::UMat& image_color, int frame_id, std::string filepath)
-    {
-        char file[200];
-        sprintf(file, "image_0/%06d.png", frame_id);
-        std::string filename = filepath + std::string(file);
-        image_color = cv::imread(filename, IMREAD_COLOR).getUMat(ACCESS_READ);
-        
-        if (image_color.empty())
-        {
-            cerr << "Failed to load image: " << filename << endl;
+
+    //========================= ДЛЯ ДОБАВЛЕНИЯ ХАРАКТЕРНЫХ ТОЧЕК ===================
+
+    void removeFramePoints(vector<Point2f>& p0, double minDistance)
+{
+    if (p0.empty()) return;
+
+    // Сортировка точек по оси Х
+    std::sort(p0.begin(), p0.end(), [](const cv::Point2f& a, const cv::Point2f& b) {
+        return a.x < b.x;
+    });
+
+    std::vector<bool> toRemove(p0.size(), false);
+    for (size_t i = 0; i < p0.size(); ++i) {
+        if (toRemove[i]) continue; 
+
+        for (size_t j = i + 1; j < p0.size(); ++j) {
+            if (p0[j].x - p0[i].x > minDistance) {
+                break; 
+            }
+
+            float dx = p0[j].x - p0[i].x;
+            float dy = p0[j].y - p0[i].y;
+            float distanceSq = dx * dx + dy * dy;
+
+            if (distanceSq < minDistance * minDistance) {
+                toRemove[j] = true;
+            }
         }
     }
+
+    for (int i = p0.size() - 1; i >= 0; --i) {
+        if (toRemove[i]) {
+            p0.erase(p0.begin() + i);
+        }
+    }
+}
+
 
 
     void iirAdaptive(TransformParam& transformsFirtsDerivative, TransformParam& transforms, TransformParam& transformSKO, 
         double& tau_stab, Rect& roi, const int a, const int b, double& kSwitch)
     {
-        if ((abs(transformsFirtsDerivative.dx) - 20.0 < 3.0 * transformSKO.dx) && 
+        if (true ||
+            (abs(transformsFirtsDerivative.dx) - 20.0 < 3.0 * transformSKO.dx) && 
             (abs(transformsFirtsDerivative.dy) - 20.0 < 3.0 * transformSKO.dy) && 
             (abs(transformsFirtsDerivative.da) - 10.0 * DEG_TO_RAD < 3.0 * transformSKO.da))
         {
@@ -1005,10 +962,10 @@ void captureThread(bool useCamera) {
             transforms.dy = kSwitch * (transforms.dy * (tau_stab - 1.0) / tau_stab + kSwitch * transformsFirtsDerivative.dy);
             transforms.da = kSwitch * (transforms.da * (tau_stab - 1.0) / tau_stab + kSwitch * transformsFirtsDerivative.da);
         } 
-        else 
-        {
-            cout << "iirAdaptive Explosion Detected" << endl;
-        }
+        // else 
+        // {
+        //     cout << "iirAdaptive Explosion Detected" << endl;
+        // }
 
         if (transforms.da > CV_PI)
             transforms.da -= CV_PI;
@@ -1066,9 +1023,9 @@ void captureThread(bool useCamera) {
         if (kSwitch < 1.0)
             tau_stab *= (4.0 + kSwitch) / 5.0;
 
-        transformSKO.dx = (1.0 - 0.1) * transformSKO.dx + 0.1 * abs(transforms.dx);
-        transformSKO.dy = (1.0 - 0.1) * transformSKO.dy + 0.1 * abs(transforms.dy);
-        transformSKO.da = (1.0 - 0.1) * transformSKO.da + 0.1 * abs(transforms.da);
+        transformSKO.dx = (1.0 - 0.1) * transformSKO.dx + 0.1 * abs(transformsFirtsDerivative.dx);
+        transformSKO.dy = (1.0 - 0.1) * transformSKO.dy + 0.1 * abs(transformsFirtsDerivative.dy);
+        transformSKO.da = (1.0 - 0.1) * transformSKO.da + 0.1 * abs(transformsFirtsDerivative.da);
 
     }
 
@@ -1128,7 +1085,8 @@ int main() {
     
     // Создание стабилизатора
     VideoStabilizer stabilizer;
-    bool useCamera = false; // Измените на true для камеры
+    
+    // Запуск системы
     stabilizer.start();
     
     // Ожидание завершения
@@ -1136,17 +1094,17 @@ int main() {
     cout << "Press SPACE to pause, S to save frame, D to toggle debug mode" << endl;
     
     // Основной цикл ожидания
+   
     try {
-        while (true) {
+        while (stabilizer.running)
+        {
             this_thread::sleep_for(chrono::seconds(1));
         }
-    } catch () {
+    } catch (...) {
         cout << "Main thread interrupted" << endl;
     }
-    
     // Остановка системы
     stabilizer.stop();
-    
     cout << "Program finished successfully" << endl;
     return 0;
 }
