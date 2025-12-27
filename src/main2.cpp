@@ -55,7 +55,7 @@ const int itersConfig = 6;
 // Источник видео (измените на свой)
 const string videoSource = "http://192.168.0.102:4747/video";
 
-const string filepath = string("/home/bananapi/Opencv_projects/dataset/videos/PXL_3/");
+const string filepath = string("/home/bananapi/Opencv_projects/dataset/videos/PXL_4K/");
 // const int videoSource = 0; // Для камеры
 
 // ========================= СТРУКТУРЫ ДАННЫХ =========================
@@ -81,11 +81,11 @@ struct TransformParam {
     
     void getTransformInvert(Mat& T) const {
         T = Mat::zeros(2, 3, CV_64F); // ИНИЦИАЛИЗИРУЕМ МАТРИЦУ
-        T.at<double>(0, 0) = cos(-da);
-        T.at<double>(0, 1) = -sin(-da);
+        T.at<double>(0, 0) = cos(da);
+        T.at<double>(0, 1) = sin(da);
         T.at<double>(0, 2) = -dx;
-        T.at<double>(1, 0) = sin(-da);
-        T.at<double>(1, 1) = cos(-da);
+        T.at<double>(1, 0) = -sin(da);
+        T.at<double>(1, 1) = cos(da);
         T.at<double>(1, 2) = -dy;
     }
     
@@ -107,6 +107,7 @@ struct FrameData {
     TransformParam transformSKO;
     TransformParam transformFirstDerivative;
     TransformParam transform;
+    Mat stabMatrix;
     int frameId;
     double timestamp;
     
@@ -179,6 +180,7 @@ private:
     double tauStab;
     double kSwitch;
     double framePart;
+    TransformParam oldTransform;
     Rect roi;
     Size frameSize;
     int a, b; // Ширина и высота кадра
@@ -206,7 +208,7 @@ public:
         : running(false), 
           tauStab(100.0), 
           kSwitch(0.01), 
-          framePart(0.5),
+          framePart(0.8),
           fps(10),
           processingTime(0),
           trackedPoints(0),
@@ -367,7 +369,7 @@ private:
                           trackedFramesQueue.size() + stabilizedFramesQueue.size();
             
             if (totalLag > MAX_PROCESSING_LAG) {
-                this_thread::sleep_for(chrono::milliseconds(50));
+                this_thread::sleep_for(chrono::milliseconds(1)); //50
                 continue;
             }
             
@@ -383,7 +385,7 @@ private:
                 frameRead = cap.read(frame);
                 if (!frameRead) {
                     cerr << "Failed to read frame from camera" << endl;
-                    this_thread::sleep_for(chrono::milliseconds(10));
+                    this_thread::sleep_for(chrono::milliseconds(1)); //10
                     continue;
                 }
             } else {
@@ -468,7 +470,7 @@ private:
             }
             
             // Ограничение FPS если нужно
-            this_thread::sleep_for(chrono::milliseconds(100));
+            //this_thread::sleep_for(chrono::milliseconds(5));
         }
         
         if (useCamera) {
@@ -706,41 +708,44 @@ private:
 
             if (!frameData.frame.empty()) {
                 try {
-                    if (kSwitch < 0.01) 
-                        kSwitch = 0.01;
-                    if (kSwitch < 1.0)
+                    if (VideoStabilizer::kSwitch < 0.01) 
+                        VideoStabilizer::kSwitch = 0.01;
+                    if (VideoStabilizer::kSwitch < 1.0)
                     {
-                        kSwitch *= 1.06;
-                        kSwitch += 0.005;
+                        VideoStabilizer::kSwitch *= 1.06;
+                        VideoStabilizer::kSwitch += 0.005;
                     }
-                    else if (kSwitch > 1.0) kSwitch = 1.0;
+                    else if (VideoStabilizer::kSwitch > 1.0)
+                        VideoStabilizer::kSwitch = 1.0;
                     
+
+                    VideoStabilizer::kSwitch = 1.0;
                     framesProcessed++;
                     
                     // Стабилизация
-                    iirAdaptive(frameData.transformFirstDerivative, frameData.transform, 
-                               frameData.transformSKO, tauStab, roi, a, b, kSwitch);
+                    iirAdaptive(frameData.transformFirstDerivative, oldTransform, 
+                               frameData.transformSKO, frameData.stabMatrix, VideoStabilizer::tauStab, VideoStabilizer::roi, a, b, VideoStabilizer::kSwitch);
                     
-                    // Вычисляем матрицу стабилизации
-                    Mat stabMatrix;
-                    frameData.transform.getTransform(stabMatrix);
+                    frameData.transform = oldTransform;
                     
                     // Применяем стабилизацию
-                    Mat stabilizedFrame;
-                    warpAffine(frameData.frame, stabilizedFrame, stabMatrix, frameSize);
+                    Mat stabilizedFrame, croppedFrame;
 
-                    // Обрезаем по ROI
-                    if (VideoStabilizer::roi.width > 0 && VideoStabilizer::roi.height > 0 && 
-                        VideoStabilizer::roi.x >= 0 && roi.y >= 0 &&
-                        VideoStabilizer::roi.x + VideoStabilizer::roi.width <= stabilizedFrame.cols &&
-                        VideoStabilizer::roi.y + VideoStabilizer::roi.height <= stabilizedFrame.rows) {
-                        
-                        stabilizedFrame.copyTo(frameData.frame);
-                        framesStabilized++;
-                    } else {
-                        // Если ROI невалиден, используем полный кадр
-                        stabilizedFrame.copyTo(frameData.frame);
+                                // Рисуем точки
+                    if (!frameData.points.empty()) {
+                        int pointsToShow = min(200, static_cast<int>(frameData.points.size()));
+                        for (int i = 0; i < pointsToShow; i++) {
+                            Point2f pt = frameData.points[i];
+                            Point scaledPt(static_cast<int>(pt.x * compressionConfig),
+                                        static_cast<int>(pt.y * compressionConfig));
+                            circle(frameData.frame, scaledPt, 3, colorRED, -1);
+                        }
                     }
+
+                    warpAffine(frameData.frame, stabilizedFrame, frameData.stabMatrix, frameSize);
+                    croppedFrame = stabilizedFrame(roi);
+                    croppedFrame.copyTo(frameData.frame);
+                    framesStabilized++;
                     
                 } catch (const exception& e) {
                     cerr << "Error in stabilization: " << e.what() << endl;
@@ -779,7 +784,7 @@ private:
     void displayThread() {
         const string windowName = "Video Stabilization";
         namedWindow(windowName, WINDOW_NORMAL);
-        resizeWindow(windowName, 1280, 720);
+        resizeWindow(windowName, 800, 600);
         
         // Для записи видео (если включено)
         VideoWriter writer;
@@ -858,20 +863,20 @@ private:
             
             // Создаем информационный overlay
             Mat displayFrame;
-            frameData.frame.copyTo(displayFrame);
-            
+            //frameData.frame.copyTo(displayFrame);
+            resize(frameData.frame, displayFrame, Size(a,b));
             // Добавляем информацию о производительности
-            string infoText = format("Frame: %d | FPS: %d | Points: %d | Process: %.1f ms | kSwitch: %.1f, | framePart: %1.1f",
+            string infoText = format("Frame: %d | FPS: %d | Points: %d | Process: %.1f ms | tauStab: %.1f, | framePart: %1.1f",
                                     frameData.frameId, fps.load(), trackedPoints.load(), 
-                                    processingTime.load(), kSwitch, VideoStabilizer::framePart);
+                                    processingTime.load(), VideoStabilizer::tauStab, VideoStabilizer::framePart);
             putText(displayFrame, "biases" + frameData.transform.printString(), Point(10, 60),
-                   FONT_HERSHEY_SIMPLEX, 0.7, colorGREEN, 2);
+                   FONT_HERSHEY_SIMPLEX, 0.7*a/800, colorGREEN, 2);
             putText(displayFrame, "derivative " + frameData.transformFirstDerivative.printString(), Point(10, 90),
-                   FONT_HERSHEY_SIMPLEX, 0.7, colorGREEN, 2);
+                   FONT_HERSHEY_SIMPLEX, 0.7*a/800, colorGREEN, 2);
             putText(displayFrame, "SKO " + frameData.transformSKO.printString(), Point(10, 120),
-                   FONT_HERSHEY_SIMPLEX, 0.7, colorGREEN, 2);
+                   FONT_HERSHEY_SIMPLEX, 0.7*a/800, colorGREEN, 2);
             putText(displayFrame, infoText, Point(10, b-50),
-                   FONT_HERSHEY_SIMPLEX, 0.4, colorRED, 2);
+                   FONT_HERSHEY_SIMPLEX, 0.5*a/800, colorGREEN, 2);
             
             // Добавляем информацию о трансформации
             string transformText = format("dX: %.1f dY: %.1f dA: %.1f deg",
@@ -881,15 +886,15 @@ private:
                    FONT_HERSHEY_SIMPLEX, 0.7, colorYELLOW, 2);
             
             // Рисуем точки
-            if (!frameData.points.empty()) {
-                int pointsToShow = min(200, static_cast<int>(frameData.points.size()));
-                for (int i = 0; i < pointsToShow; i++) {
-                    Point2f pt = frameData.points[i];
-                    Point scaledPt(static_cast<int>(pt.x * compressionConfig),
-                                   static_cast<int>(pt.y * compressionConfig));
-                    circle(displayFrame, scaledPt, 5, colorBLUE, -1);
-                }
-            }
+            // if (!frameData.points.empty()) {
+            //     int pointsToShow = min(200, static_cast<int>(frameData.points.size()));
+            //     for (int i = 0; i < pointsToShow; i++) {
+            //         Point2f pt = frameData.points[i];
+            //         Point scaledPt(static_cast<int>(pt.x * compressionConfig),
+            //                        static_cast<int>(pt.y * compressionConfig));
+            //         circle(displayFrame, scaledPt, 1, colorBLUE, -1);
+            //     }
+            // }
             
             // Отображаем
             imshow(windowName, displayFrame);
@@ -914,8 +919,8 @@ private:
             
             // Регулируем задержку для поддержания FPS
             auto frameElapsed = chrono::duration_cast<chrono::milliseconds>(now - lastFrameTime);
-            if (frameElapsed.count() < 33) { // ~30 FPS
-                this_thread::sleep_for(chrono::milliseconds(33 - frameElapsed.count()));
+            if (frameElapsed.count() < 16) { // ~60 FPS
+                this_thread::sleep_for(chrono::milliseconds(16 - frameElapsed.count()));
             }
             lastFrameTime = now;
             
@@ -980,7 +985,14 @@ private:
 
         if (image_color.empty())
         {
-            cerr << "Failed to load image: " << filename << endl;
+            sprintf(file, "image_0/%06d.jpg", frame_id);
+            std::string filename = filepath + std::string(file);
+            image_color = cv::imread(filename, IMREAD_COLOR);
+            if (image_color.empty())
+            {
+                cerr << "Failed to load image: " << filename << endl;
+            }
+            
         }
     }
 
@@ -1019,17 +1031,17 @@ private:
         }
     }
 
-    void iirAdaptive(TransformParam& transformsFirtsDerivative, TransformParam& transforms, TransformParam& transformSKO, 
-        double& tau_stab, Rect& roi, const int a, const int b, double& kSwitch)
+    void iirAdaptive(TransformParam& transformsFirtsDerivative, TransformParam& transforms, TransformParam& transformSKO, Mat& stabMatrix, 
+        double& tauStab, Rect& roi, const int a, const int b, double& kSwitch)
     {
         if (true ||
             (abs(transformsFirtsDerivative.dx) - 20.0 < 3.0 * transformSKO.dx) && 
             (abs(transformsFirtsDerivative.dy) - 20.0 < 3.0 * transformSKO.dy) && 
             (abs(transformsFirtsDerivative.da) - 10.0 * DEG_TO_RAD < 3.0 * transformSKO.da))
         {
-            transforms.dx = kSwitch * (transforms.dx * (tau_stab - 1.0) / tau_stab + kSwitch * transformsFirtsDerivative.dx);
-            transforms.dy = kSwitch * (transforms.dy * (tau_stab - 1.0) / tau_stab + kSwitch * transformsFirtsDerivative.dy);
-            transforms.da = kSwitch * (transforms.da * (tau_stab - 1.0) / tau_stab + kSwitch * transformsFirtsDerivative.da);
+            transforms.dx = kSwitch * (transforms.dx * (tauStab - 1.0) / tauStab + kSwitch * transformsFirtsDerivative.dx);
+            transforms.dy = kSwitch * (transforms.dy * (tauStab - 1.0) / tauStab + kSwitch * transformsFirtsDerivative.dy);
+            transforms.da = kSwitch * (transforms.da * (tauStab - 1.0) / tauStab + kSwitch * transformsFirtsDerivative.da);
         }
 
         if (transforms.da > CV_PI)
@@ -1037,33 +1049,33 @@ private:
         if (transforms.da < -CV_PI)
             transforms.da += CV_PI;
 
-        if (tau_stab < 30.0)
-            tau_stab *= 1.2;
+        if (tauStab < 30.0)
+            tauStab *= 1.2;
 
-        if (tau_stab < 50.0 && !(abs(transforms.dx) > a / 2 || abs(transforms.dy) > b / 2))
-            tau_stab *= 1.1;
+        if (tauStab < 50.0 && !(abs(transforms.dx) > a / 2 || abs(transforms.dy) > b / 2))
+            tauStab *= 1.1;
 
-        if (tau_stab < 100.0 && !(abs(transforms.dx) > a / 3 || abs(transforms.dy) > b / 3))
+        if (tauStab < 100.0 && !(abs(transforms.dx) > a / 3 || abs(transforms.dy) > b / 3))
         {
-            tau_stab *= 1.1;
-            if (tau_stab > 100.0)
-                tau_stab = 100.0;
+            tauStab *= 1.1;
+            if (tauStab > 100.0)
+                tauStab = 100.0;
         }
 
         // Проверка границ ROI
         if (roi.x + (int)transforms.dx < 0)
         {
             transforms.dx = double(1 - roi.x);
-            if (tau_stab > 50) {
-                tau_stab *= 0.9;
+            if (tauStab > 50) {
+                tauStab *= 0.9;
                 kSwitch *= 0.95;
             }
         }
         else if (roi.x + roi.width + (int)transforms.dx >= a)
         {
             transforms.dx = (double)(a - roi.x - roi.width);
-            if (tau_stab > 50) {
-                tau_stab *= 0.9;
+            if (tauStab > 50) {
+                tauStab *= 0.9;
                 kSwitch *= 0.95;
             }
         }
@@ -1071,26 +1083,29 @@ private:
         if (roi.y + (int)transforms.dy < 0)
         {
             transforms.dy = (double)(1 - roi.y);
-            if (tau_stab > 10) {
-                tau_stab *= 0.9;
+            if (tauStab > 10) {
+                tauStab *= 0.9;
                 kSwitch *= 0.95;
             }
         }
         else if (roi.y + roi.height + (int)transforms.dy >= b)
         {
             transforms.dy = (double)(b - roi.y - roi.height);
-            if (tau_stab > 50) {
-                tau_stab *= 0.9;
+            if (tauStab > 50) {
+                tauStab *= 0.9;
                 kSwitch *= 0.95;
             }
         }
 
         if (kSwitch < 1.0)
-            tau_stab *= (4.0 + kSwitch) / 5.0;
+            tauStab *= (4.0 + kSwitch) / 5.0;
 
         transformSKO.dx = (1.0 - 0.1) * transformSKO.dx + 0.1 * abs(transformsFirtsDerivative.dx);
         transformSKO.dy = (1.0 - 0.1) * transformSKO.dy + 0.1 * abs(transformsFirtsDerivative.dy);
         transformSKO.da = (1.0 - 0.1) * transformSKO.da + 0.1 * abs(transformsFirtsDerivative.da);
+
+        // transforms.getTransform(stabMatrix);
+        transforms.getTransformInvert(stabMatrix);
     }
 };
 
@@ -1102,12 +1117,12 @@ int main() {
     cout << "========================================" << endl;
     
     // Проверка поддержки OpenCL
-    if (ocl::haveOpenCL()) {
-        cout << "OpenCL is available" << endl;
-        ocl::setUseOpenCL(true);
-    } else {
-        cout << "OpenCL is not available, using CPU" << endl;
-    }
+    // if (ocl::haveOpenCL()) {
+    //     cout << "OpenCL is available" << endl;
+    //     ocl::setUseOpenCL(true);
+    // } else {
+    //     cout << "OpenCL is not available, using CPU" << endl;
+    // }
     
     // Создание стабилизатора
     VideoStabilizer stabilizer;
@@ -1123,7 +1138,7 @@ int main() {
     try {
         while (stabilizer.running)
         {
-            this_thread::sleep_for(chrono::seconds(1));
+            this_thread::sleep_for(chrono::seconds(50));
         }
     } catch (...) {
         cout << "Main thread interrupted" << endl;
