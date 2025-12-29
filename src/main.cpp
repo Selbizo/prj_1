@@ -10,56 +10,6 @@ using namespace cv;
 using namespace std;
 namespace fs = std::filesystem;
 
-#define NCoef 10
-#define DCgain 4
-
-#define Ntap 31
-
-// TransformParam iirNoise(TransformParam &NewSample,vector<TransformParam>& x, vector<TransformParam>& y) {
-   
-//    double FIRCoef[Ntap] = {
-//          -40, -16, 28, 48, 21, -31, -56, -25, 33, 62, 29, -34, -66, -32, 34, 68, 34, -32, -66, -34, 29, 62, 33, -25, -56,-31, 21, 48, 28, -16, -40
-//    };
-   
-//    double ACoef[NCoef+1] = {
-//           12, 0, -60, 0, 120, 0, -120, 0, 60, 0, -12
-//    };
-
-//    double BCoef[NCoef+1] = {
-//           64, -70, 30, -16, 29, -17, 5, -1, 1, 0, 0
-//    };
-
-//    int n;
-
-//    //shift the old samples
-//    for(n=NCoef; n>0; n--) {
-//       x[n] = x[n-1];
-//       y[n] = y[n-1];
-//    }
-
-//    //Calculate the new output
-//    x[0] = NewSample;
-//    y[0].dx = ACoef[0] * x[0].dx;
-//    y[0].dy = ACoef[0] * x[0].dy;
-//    y[0].da = ACoef[0] * x[0].da;
-
-//    for (n = 1; n <= NCoef; n++)
-//    {
-//        y[0].dx += ACoef[n] * x[n].dx - BCoef[n] * y[n].dx;
-//        y[0].dy += ACoef[n] * x[n].dy - BCoef[n] * y[n].dy;
-//        y[0].da += ACoef[n] * x[n].da - BCoef[n] * y[n].da;
-
-//    }
-
-//    y[0].dy /= (BCoef[0]*DCgain);
-//    y[0].da /= (BCoef[0]*DCgain);
-//    y[0].dx /= (BCoef[0]*DCgain);
-
-//    return y[0];
-// }
-
-
-
 int main()
 {
 	TransformParam noiseIn = { 0.0, 0.0, 0.0 };
@@ -94,9 +44,9 @@ int main()
 	RNG rng;
 	for (int i = 0; i < 1000; i++)
 	{
-		unsigned short b = rng.uniform(100, 230);
-		unsigned short g = rng.uniform(100, 230);
-		unsigned short r = rng.uniform(100, 230);
+		unsigned short b = rng.uniform(100, 130);
+		unsigned short g = rng.uniform(100, 130);
+		unsigned short r = rng.uniform(200, 230);
 		colors.push_back(Scalar(b, g, r));
 	}
 	// детектор для поиска характерных точек
@@ -223,7 +173,7 @@ int main()
 	cuda::GpuMat gFrameWiener;
 
 	// ~~~~~~~~~~~~~~~~~~~~~~~~~~~ для счетчика кадров в секунду ~~~~~~~~~~~~~~~~~~~~~~~~~~~//
-	unsigned int frameCnt = 0;
+	// unsigned int frameCnt = 0;
 	double seconds = 0.05;
 	double secondsGPUPing = 0.0;
 	double secondsFullPing = 0.0;
@@ -426,16 +376,25 @@ int main()
 	// while (true) {
 	for(int frameCount = init_frame_id + 1; frameCount < 4500; frameCount++){
 		secondsFullPing = 0.96 * secondsFullPing + 0.04 * (double)(endFullPing - startFullPing) / CLOCKS_PER_SEC;
-		//++frameCount;
 		startFullPing = clock();
 
 		secondsGPUPing = 0.96 * secondsGPUPing + 0.04 * (double)(endGPUPing - startGPUPing) / CLOCKS_PER_SEC;
+
+		noiseIn.dx = (double)(rng.uniform(-100.0, 100.0))*0.01 + 20.0*sin((double)(frameCount*DEG_TO_RAD*80.0));
+		noiseIn.dy = (double)(rng.uniform(-100.0, 100.0))*0.01 + 20.0*cos((double)(frameCount*DEG_TO_RAD*80.0));
+		noiseIn.da = (double)(rng.uniform(-50.0, 50.0)* 0.001 * DEG_TO_RAD) - 5.0*DEG_TO_RAD*sin((double)(frameCount*DEG_TO_RAD*40.0));
+			
+		noiseOut[0] = iirNoise(noiseIn, X, Y);
+
+		noiseOut[0].getTransform(TShake);
+		//noiseIn.getTransform(TShake);
+
 		if (stabPossible) {
 			good_new.clear();
 			for (uint i = 0; i < p1.size(); ++i)
 			{
-				if (status[i] && p1[i].x < (double)(a * 25 / 32) && p1[i].x > (double)(a * 6 / 32) && 
-					p1[i].y < (double)(b * 25 / 32) && p1[i].y > (double)(b * 6 / 32) //remove point close to the edges
+				if (status[i] && p1[i].x < (double)(a * 31 / 32) && p1[i].x > (double)(a * 1 / 32) && 
+					p1[i].y < (double)(b * 31 / 32) && p1[i].y > (double)(b * 1 / 32) //remove point close to the edges
 					)
 				{
 					good_new.push_back(p1[i]);
@@ -477,18 +436,12 @@ int main()
 				loadImage(frame, frameCount, filepath);
 			}
 
+			
 
-			noiseIn.dx = (double)(rng.uniform(-100.0, 100.0)) /4          ;// / 32 + noiseIn.dx * 31 / 32;
-       		noiseIn.dy = (double)(rng.uniform(-100.0, 100.0)) /4          ;//    / 32 + noiseIn.dy * 31 / 32;
-       		noiseIn.da = (double)(rng.uniform(-1000.0, 1000.0) * 0.0001)/8;// / 32 + noiseIn.da * 31 / 32;
-
-       		noiseOut[0] = iirNoise(noiseIn, X, Y);
-
-    		noiseOut[0].getTransform(TShake);
     		warpAffine(frame, frame, TShake, frame.size());
 		}
 
-		if (frameCnt % 128 == 1)
+		if (frameCount % 128 == 1)
 		{
 			end = clock();
 			seconds = (double)(end - start) / CLOCKS_PER_SEC / 128;
@@ -506,7 +459,7 @@ int main()
 		{
 			writerFrame.setTo(colorBLACK);
 		}
-		frameCnt++;
+		// frameCnt++;
 
 		startGPUPing = clock();
 		if (stabPossible) {
@@ -537,13 +490,13 @@ int main()
 				loadImage(frame, frameCount, filepath);
 			}
 			
-			noiseIn.dx = (double)(rng.uniform(-10.0, 10.0));
-       		noiseIn.dy = (double)(rng.uniform(-10.0, 10.0));
-       		noiseIn.da = (double)(rng.uniform(-0.1, 0.1));
+			// noiseIn.dx = (double)(rng.uniform(-10.0, 10.0));
+       		// noiseIn.dy = (double)(rng.uniform(-10.0, 10.0));
+       		// noiseIn.da = (double)(rng.uniform(-0.1, 0.1));
 
-       		noiseOut[0] = iirNoise(noiseIn, X, Y);
+       		// noiseOut[0] = iirNoise(noiseIn, X, Y);
 
-    		noiseOut[0].getTransform(TShake);
+    		// noiseOut[0].getTransform(TShake);
     		warpAffine(frame, frame, TShake, frame.size());
 
 			if (!stabPossible) {
@@ -556,7 +509,7 @@ int main()
 			cuda::cvtColor(gCompressed, gGray, COLOR_BGR2GRAY);
 			cuda::bilateralFilter(gGray, gGray, 3, 1.0, 1.0); //make it adaptive to SNR
 
-			if (frameCnt % 10 == 1 && !stabPossible)
+			if (frameCount % 10 == 1 && !stabPossible)
 			{
 				initFirstFrame(cameraInUse, capture, filepath, frameCount, oldFrame, gOldFrame, gOldGray, gOldCompressed, 
 					gP0, p0, qualityLevel, harrisK, maxCorners, d_features, transforms, 
@@ -697,7 +650,7 @@ int main()
 
 				if (p0.size() > 0)
 					for (uint i = 0; i < p0.size(); i++)
-						circle(writerFrame, cv::Point2f(p1[i].x*compression + a, p1[i].y*compression), 3, colors[i], -1);
+						circle(writerFrame, cv::Point2f(p1[i].x*compression + a, p1[i].y*compression), 10, colors[i], -1);
 								
 				showServiceInfo(writerFrame, qWiener, nsr, wiener, threadwiener, stabPossible, transforms, movement, movementKalman,tauStab, kSwitch, framePart, gP0.cols, maxCorners,
 					seconds, secondsGPUPing, secondsFullPing, a, b, textOrg, textOrgOrig, textOrgCrop, textOrgStab, 
@@ -776,7 +729,7 @@ int main()
 			}
 		}
 		// Ожидание внешних команд управления с клавиатуры
-		int keyboard = waitKey(80);
+		int keyboard = waitKey(100);
 		if (keyResponse(keyboard, frame, frameStabilizatedCropResized, crossRef, gCrossRef, a, b, nsr, wiener, threadwiener, qWiener, tauStab, framePart, roi))
 			break;
 		endFullPing = clock();
