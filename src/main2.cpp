@@ -36,16 +36,16 @@ const Scalar colorBLACK(0, 0, 0);
 // Настройки системы
 // const bool multiScreen = true;
 const bool recordEnable = false;
-const int compressionConfig = 2; // Сжатие для обработки
+const int compressionConfig = 3; // Сжатие для обработки
 //const int outputResolution = 720; // Разрешение вывода
 
 // Настройки детектора
 int maxCornersConfig = 200 / compressionConfig;
-const double qualityLevelConfig = 0.005 / compressionConfig;
+double qualityLevelConfig = 0.005 / compressionConfig;
 const double minDistanceConfig = 4.0;
 const int blockSizeConfig = 9;
 const bool useHarrisDetectorConfig = true;
-const double harrisKConfig = qualityLevelConfig;
+double harrisKConfig = qualityLevelConfig;
 
 // Настройки оптического потока
 const int winSizeConfig = blockSizeConfig;
@@ -55,7 +55,8 @@ const int itersConfig = 6;
 // Источник видео (измените на свой)
 const string videoSource = "http://192.168.0.102:4747/video";
 
-const string filepath = string("/home/bananapi/Opencv_projects/dataset/videos/PXL_3/");
+// Убрали фиксированный путь к файлам
+string filepath = "";
 
 // ========================= СТРУКТУРЫ ДАННЫХ =========================
 
@@ -110,13 +111,7 @@ struct FrameData {
     int frameId;
     double timestamp;
     
-    double processingTimeCapture;
-    double processingTimeDetection;
-    double processingTimeTracktion;
-    double processingTimeStabilization;
-    double processingTimeImshow;
 
-    
     FrameData() : frameId(0), timestamp(0) {}
 };
 
@@ -167,10 +162,8 @@ public:
 class VideoStabilizer {
 private:
     // Очереди конвейерной обработки
-    ThreadSafeQueue rawFramesQueue;          // Захват -> Детекция
-    ThreadSafeQueue detectedFramesQueue;     // Детекция -> Отслеживание
-    ThreadSafeQueue trackedFramesQueue;      // Отслеживание -> Стабилизация
-    ThreadSafeQueue stabilizedFramesQueue;   // Стабилизация -> Отображение
+    ThreadSafeQueue rawFramesQueue;          // Захват -> Объединенный поток
+    ThreadSafeQueue processedFramesQueue;    // Объединенный поток -> Стабилизация
     
     // Буфер для сохранения порядка кадров при отображении
     unordered_map<int, FrameData> frameBuffer;
@@ -180,7 +173,12 @@ private:
     
     // Общие ресурсы
     mutex resourcesMutex;
-    Ptr<FeatureDetector> detector;
+    Ptr<GFTTDetector> detector;
+    
+    // Для отслеживания точек между кадрами
+    Mat prevGray;
+    vector<Point2f> prevPoints;
+    bool firstFrameForTracking = true;
     
     // Параметры стабилизации
     double tauStab;
@@ -202,9 +200,14 @@ private:
     
     // Оптимизация производительности
     atomic<int> processingLag{0};
-    const int MAX_PROCESSING_LAG = 10;
-    const int MAX_BUFFER_SIZE = 20;
+    const int MAX_PROCESSING_LAG = 8;
+    const int MAX_BUFFER_SIZE = 10;
     
+    double processingTimeCapture;
+    double processingTimeDetectionTracking;
+    double processingTimeStabilization;
+    double processingTimeImshow;
+
 public:
     // Потоки обработки
     vector<thread> workers;
@@ -229,13 +232,6 @@ public:
             harrisKConfig
         );
 
-        
-
-        //detector = ORB::create();
-        // detector = cv::AKAZE::create();
-
-        
-
         cout << "Detector created with maxCorners=" << maxCornersConfig << endl;
     }
     
@@ -243,13 +239,12 @@ public:
         stop();
     }
     
-    void start() {
+    void start(bool useCamera, const string& imageFolderPath = "") {
         running = true;
         
-        // Запуск потоков обработки
-        workers.emplace_back(&VideoStabilizer::captureThread, this, false);
-        workers.emplace_back(&VideoStabilizer::detectionThread, this);
-        workers.emplace_back(&VideoStabilizer::trackingThread, this);
+        // Запуск потоков обработки (объединенный поток заменяет два старых)
+        workers.emplace_back(&VideoStabilizer::captureThread, this, useCamera, imageFolderPath);
+        workers.emplace_back(&VideoStabilizer::detectionAndTrackingThread, this); // Объединенный поток
         workers.emplace_back(&VideoStabilizer::stabilizationThread, this);
         workers.emplace_back(&VideoStabilizer::displayThread, this);
         
@@ -276,10 +271,10 @@ public:
     
 private:
     // ========================= ПОТОК ЗАХВАТА КАДРОВ =========================
-    void captureThread(bool useCamera) {
+    void captureThread(bool useCamera, const string& imageFolderPath) {
         // Если не используем камеру, читаем изображения из файлов
         if (!useCamera) {
-            if (filepath.empty() || filepath == "0") {
+            if (imageFolderPath.empty()) {
                 cerr << "File path not specified for image sequence loading" << endl;
                 running = false;
                 return;
@@ -287,13 +282,13 @@ private:
             
             // Проверяем, существует ли директория
             struct stat info;
-            if (stat(filepath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
-                cerr << "Cannot access directory: " << filepath << endl;
+            if (stat(imageFolderPath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
+                cerr << "Cannot access directory: " << imageFolderPath << endl;
                 running = false;
                 return;
             }
             
-            cout << "Loading image sequence from: " << filepath << endl;
+            cout << "Loading image sequence from: " << imageFolderPath << endl;
         }
         
         // Для режима камеры оставляем VideoCapture
@@ -332,13 +327,13 @@ private:
         } else {
             // Для режима изображений загружаем первое изображение для определения размеров
             Mat firstFrame;
-            loadImage(firstFrame, 0, filepath);
+            loadImage(firstFrame, 0, imageFolderPath);
             
             if (firstFrame.empty()) {
                 cerr << "Failed to load first image, checking other indices..." << endl;
                 // Пробуем найти первое доступное изображение
                 for (int i = 1; i < 100; i++) {
-                    loadImage(firstFrame, i, filepath);
+                    loadImage(firstFrame, i, imageFolderPath);
                     if (!firstFrame.empty()) break;
                 }
                 
@@ -373,16 +368,15 @@ private:
         int frameId = 0;
         auto lastFpsTime = chrono::steady_clock::now();
         int frameCount = 0;
-        const int MAX_QUEUE_SIZE = 5;
         
         while (running) {
             // Ограничиваем размер очереди, если обработка отстает
             auto startTimeCap = chrono::steady_clock::now();
-            int totalLag = rawFramesQueue.size() + detectedFramesQueue.size() + 
-                          trackedFramesQueue.size() + stabilizedFramesQueue.size();
+            int totalLag = rawFramesQueue.size() + processedFramesQueue.size();
             
             if (totalLag > MAX_PROCESSING_LAG) {
-                this_thread::sleep_for(chrono::milliseconds(1)); //50
+                this_thread::sleep_for(chrono::milliseconds(5));
+                cout << "MAX_PROCESSING_LAG" << endl;
                 continue;
             }
             
@@ -398,18 +392,17 @@ private:
                 frameRead = cap.read(frame);
                 if (!frameRead) {
                     cerr << "Failed to read frame from camera" << endl;
-                    this_thread::sleep_for(chrono::milliseconds(1)); //10
                     continue;
                 }
             } else {
                 // Режим чтения изображений из файлов
-                loadImage(frameData.frame, frameData.frameId%1200, filepath);
+                loadImage(frameData.frame, frameData.frameId%1200, imageFolderPath);
                 
                 if (frameData.frame.empty()) {
                     // Если изображение не найдено, пробуем следующий индекс
                     cerr << "Failed to load image for frame " << frameData.frameId 
                          << ", trying next..." << endl;
-                    loadImage(frameData.frame, frameData.frameId%1200 + 1, filepath);
+                    loadImage(frameData.frame, frameData.frameId%1200 + 1, imageFolderPath);
                     if (frameData.frame.empty()) {
                         // Если следующее тоже не найдено, возможно, последовательность закончилась
                         cout << "Image sequence ended or no more images available" << endl;
@@ -477,16 +470,13 @@ private:
                 lastFpsTime = now;
                 if (debugMode && frameId % 100 == 0) {
                     cout << "Capture FPS: " << fps << ", Queue sizes: " 
-                         << rawFramesQueue.size() << "/" << detectedFramesQueue.size()
-                         << "/" << trackedFramesQueue.size() << "/" << stabilizedFramesQueue.size() << endl;
+                         << rawFramesQueue.size() << "/" << processedFramesQueue.size() << endl;
                 }
             }
             
-            // Ограничение FPS если нужно
-            //this_thread::sleep_for(chrono::milliseconds(3));
             auto endTimeCap = chrono::steady_clock::now();
             auto durationCap = chrono::duration_cast<chrono::microseconds>(endTimeCap - startTimeCap);
-            frameData.processingTimeCapture = durationCap.count() / 1000.0;
+            VideoStabilizer::processingTimeCapture = (VideoStabilizer::processingTimeCapture*99.0 + durationCap.count() / 1000.0)/100.0;
         }
         
         if (useCamera) {
@@ -496,39 +486,36 @@ private:
         cout << "Capture thread stopped" << endl;
     }
     
-    // ========================= ПОТОК ДЕТЕКТИРОВАНИЯ ТОЧЕК =========================
-    void detectionThread() {
-        cout << "Detection thread started" << endl;
-        int prevPointsNumber;
+    // ========================= ОБЪЕДИНЕННЫЙ ПОТОК ДЕТЕКТИРОВАНИЯ И ОТСЛЕЖИВАНИЯ =========================
+    void detectionAndTrackingThread() {
+        cout << "Detection and Tracking thread started" << endl;
+        
+        TermCriteria termcrit(TermCriteria::COUNT | TermCriteria::EPS, 20, 0.03);
+        Size winSize(winSizeConfig, winSizeConfig);
+        int consecutiveFailures = 0;
+        const int MAX_CONSECUTIVE_FAILURES = 10;
+        
         while (running) {
             FrameData frameData;
             if (!rawFramesQueue.wait_and_pop(frameData)) {
                 if (!running) break;
                 continue;
             }
-            // Проверяем, что кадр не пустой
-            if (frameData.gray.empty()) {
-                cerr << "Empty gray frame in detection thread" << endl;
-                continue;
-            }
-            auto startTimeDet = chrono::steady_clock::now();          
             
-            // Детектирование точек
-            //if (frameData.points.size() < maxCornersConfig / 2) { //~~~~prevPoints
-            if ( trackedPoints.load() < maxCornersConfig / 5) { //~~~~prevPoints
-                cout << "frameData.points.size()" << frameData.points.size() << endl;
-                cout << "prevPointsNumber" << prevPointsNumber << endl;
-
-                Mat mask = Mat::zeros(frameData.gray.size(), CV_8U);
-                int marginX = frameData.gray.cols /8;
-                int marginY = frameData.gray.rows /8;
-                rectangle(mask, 
-                         Rect(marginX, marginY, 
-                              frameData.gray.cols - 2*marginX, 
-                              frameData.gray.rows - 2*marginY),
-                         Scalar(255), FILLED);
-                
+            auto startTimeDetTrack = chrono::steady_clock::now();
+            
+            // Часть 1: Детектирование точек (только если нужно)
+            if (firstFrameForTracking || prevPoints.empty() || trackedPoints.load() < maxCornersConfig / 5) {
                 // Детектирование точек
+                Mat mask = Mat::zeros(frameData.gray.size(), CV_8U);
+                int marginX = frameData.gray.cols / 8;
+                int marginY = frameData.gray.rows / 8;
+                rectangle(mask, 
+                        Rect(marginX, marginY, 
+                            frameData.gray.cols - 2 * marginX, 
+                            frameData.gray.rows - 2 * marginY),
+                        Scalar(255), FILLED);
+                
                 vector<KeyPoint> keypoints;
                 try {
                     detector->detect(frameData.gray, keypoints, mask);
@@ -537,177 +524,162 @@ private:
                     continue;
                 }
                 
-                // Конвертация в Point2f
+                // Конвертация KeyPoint в Point2f
                 for (const auto& kp : keypoints) {
                     frameData.points.push_back(kp.pt);
                 }
                 
-                // Ограничение размера пула
+                // Ограничение размера пула точек
                 if (frameData.points.size() > maxCornersConfig * 4) {
                     frameData.points.erase(frameData.points.begin(), 
-                                   frameData.points.begin() + (frameData.points.size() - maxCornersConfig));
+                                frameData.points.begin() + (frameData.points.size() - maxCornersConfig));
                 }
                 
                 // Удаление слишком близких точек
-                removeFramePoints(frameData.points, minDistanceConfig*0.8);
-                prevPointsNumber = frameData.points.size();
-                //trackedPoints = static_cast<int>(frameData.points.size());
-            }
-            
-            if ((frameData.points.size() < maxCornersConfig/6) && maxCornersConfig > 40)
-            {
-                    maxCornersConfig *= 0.98;
-			        maxCornersConfig -= 1;
-                    if (maxCornersConfig < 40)
-                        maxCornersConfig = 40;
-			        detector = GFTTDetector::create(maxCornersConfig, qualityLevelConfig, minDistanceConfig, blockSizeConfig, useHarrisDetectorConfig, harrisKConfig);
-		    }
-
-            if ((frameData.points.size() > maxCornersConfig*4/5)) 
-            {
-                    maxCornersConfig *= 1.05;
-			        maxCornersConfig += 1;
-			        detector = GFTTDetector::create(maxCornersConfig, qualityLevelConfig, minDistanceConfig, blockSizeConfig, useHarrisDetectorConfig, harrisKConfig);
-		    }
-
-            auto endTimeDet = chrono::steady_clock::now();
-            auto durationDet = chrono::duration_cast<chrono::microseconds>(endTimeDet - startTimeDet);
-            frameData.processingTimeDetection = durationDet.count() / 1000.0;
-            
-            // Отправляем в следующую очередь конвейера
-            detectedFramesQueue.push(move(frameData));
-        }
-        
-        cout << "Detection thread stopped" << endl;
-    }
-    
-    // ========================= ПОТОК ОТСЛЕЖИВАНИЯ ТОЧЕК =========================
-    void trackingThread() {
-        Mat prevGray;
-        vector<Point2f> prevPoints;
-        bool firstFrame = true;
-        int consecutiveFailures = 0;
-        const int MAX_CONSECUTIVE_FAILURES = 10;
-        
-        TermCriteria termcrit(TermCriteria::COUNT | TermCriteria::EPS, 20, 0.03);
-        Size winSize(winSizeConfig, winSizeConfig);
-        
-        cout << "Tracking thread started" << endl;
-        
-        while (running) {
-            FrameData frameData;
-            if (!detectedFramesQueue.wait_and_pop(frameData)) {
-                if (!running) break;
-                continue;
-            }
-            
-            if (firstFrame) {
-                // Первый кадр - просто сохраняем
-                if (!frameData.gray.empty()) {
+                removeFramePoints(frameData.points, minDistanceConfig * 0.8);
+                
+                if (firstFrameForTracking) {
+                    // Первый кадр - просто сохраняем точки
                     frameData.gray.copyTo(prevGray);
                     prevPoints = frameData.points;
-                    firstFrame = false;
-                    cout << "Tracking: first frame initialized with " 
-                         << prevPoints.size() << " points" << endl;
-                }
-                // Отправляем дальше
-                trackedFramesQueue.push(move(frameData));
-                continue;
-            }
-            
-            // Проверяем, что есть предыдущие точки для отслеживания
-            if (prevPoints.empty() || frameData.gray.empty() || prevGray.empty()) {
-                if (consecutiveFailures++ > MAX_CONSECUTIVE_FAILURES) {
-                    // Сбрасываем состояние
-                    firstFrame = true;
-                    consecutiveFailures = 0;
-                    cout << "Tracking: reset due to consecutive failures" << endl;
-                }
-                // Отправляем дальше
-                trackedFramesQueue.push(move(frameData));
-                trackedPoints = 0;
-                continue;
-            }
-            
-            consecutiveFailures = 0;
-            auto startTimeTrack = chrono::steady_clock::now();
-            // Отслеживание точек оптическим потоком
-            vector<Point2f> nextPoints;
-            vector<uchar> status;
-            vector<float> err;
-            
-            try {
-                calcOpticalFlowPyrLK(
-                    prevGray, frameData.gray,
-                    prevPoints, nextPoints,
-                    status, err,
-                    winSize, maxLevelConfig,
-                    termcrit, 0, 0.001
-                );
-            } catch (const exception& e) {
-                cerr << "Error in optical flow: " << e.what() << endl;
-                // Обновляем для следующего кадра
-                frameData.gray.copyTo(prevGray);
-                prevPoints = frameData.points;
-                trackedFramesQueue.push(move(frameData));
-                continue;
-            }
-            
-            // Фильтрация хороших точек
-            vector<Point2f> goodNew;
-            vector<Point2f> goodOld;
-            
-            int goodCount = 0;
-            for (size_t i = 0; i < status.size(); i++) {
-                if (status[i] && err[i] < 50.0) {
-                    goodNew.push_back(nextPoints[i]);
-                    goodOld.push_back(prevPoints[i]);
-                    goodCount++;
+                    firstFrameForTracking = false;
+                    trackedPoints.store(static_cast<int>(prevPoints.size()));
+                    frameData.transformFirstDerivative = TransformParam(0, 0, 0);
+                    
+                    // Отправляем кадр дальше
+                    processedFramesQueue.push(move(frameData));
+                    
+                    auto endTimeDetTrack = chrono::steady_clock::now();
+                    auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - startTimeDetTrack);
+                    VideoStabilizer::processingTimeDetectionTracking = (VideoStabilizer::processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
+                    
+                    continue;
                 }
             }
             
-            // Оценка аффинного преобразования
-            if (goodCount >= 6) {
-                Mat T;
+            // Часть 2: Отслеживание точек (если это не первый кадр)
+            if (!firstFrameForTracking && !prevPoints.empty() && !frameData.gray.empty() && !prevGray.empty()) {
+                vector<Point2f> nextPoints;
+                vector<uchar> status;
+                vector<float> err;
+                
                 try {
-                    T = estimateAffine2D(goodOld, goodNew, noArray(), RANSAC, 3.0);
+                    calcOpticalFlowPyrLK(
+                        prevGray, frameData.gray,
+                        prevPoints, nextPoints,
+                        status, err,
+                        winSize, maxLevelConfig,
+                        termcrit, 0, 0.001
+                    );
                 } catch (const exception& e) {
-                    cerr << "Error in estimateAffine2D: " << e.what() << endl;
-                    T = Mat();
+                    cerr << "Error in optical flow: " << e.what() << endl;
+                    // Сбрасываем состояние
+                    frameData.gray.copyTo(prevGray);
+                    frameData.points.clear();
+                    prevPoints.clear();
+                    trackedPoints.store(0);
+                    processedFramesQueue.push(move(frameData));
+                    continue;
                 }
                 
-                if (!T.empty() && T.rows == 2 && T.cols == 3) {
-                    // Извлечение параметров трансформации
-                    double dx = T.at<double>(0, 2) * compressionConfig;
-                    double dy = T.at<double>(1, 2) * compressionConfig;
-                    double da = atan2(T.at<double>(1, 0), 
-                                     T.at<double>(0, 0));
+                // Фильтрация хороших точек
+                vector<Point2f> goodNew;
+                vector<Point2f> goodOld;
+                
+                int goodCount = 0;
+                for (size_t i = 0; i < status.size(); i++) {
+                    if (status[i] && err[i] < 50.0) {
+                        goodNew.push_back(nextPoints[i]);
+                        goodOld.push_back(prevPoints[i]);
+                        goodCount++;
+                    }
+                }
+                
+                // Оценка аффинного преобразования между кадрами
+                if (goodCount >= 6) {
+                    Mat T;
+                    try {
+                        T = estimateAffine2D(goodOld, goodNew, noArray(), RANSAC, 3.0);
+                    } catch (const exception& e) {
+                        cerr << "Error in estimateAffine2D: " << e.what() << endl;
+                        T = Mat();
+                    }
                     
-                    frameData.transformFirstDerivative = TransformParam(dx, dy, da);
-                    
-                    if (debugMode && frameData.frameId % 1 == 0) {
-                        frameData.transformFirstDerivative.print();
+                    if (!T.empty() && T.rows == 2 && T.cols == 3) {
+                        // Извлечение параметров трансформации
+                        double dx = T.at<double>(0, 2) * compressionConfig;
+                        double dy = T.at<double>(1, 2) * compressionConfig;
+                        double da = atan2(T.at<double>(1, 0), 
+                                        T.at<double>(0, 0));
+                        
+                        frameData.transformFirstDerivative = TransformParam(dx, dy, da);
+                        
+                        if (debugMode && frameData.frameId % 1 == 0) {
+                            frameData.transformFirstDerivative.print();
+                        }
+                    } else {
+                        frameData.transformFirstDerivative = TransformParam(0, 0, 0);
                     }
                 } else {
                     frameData.transformFirstDerivative = TransformParam(0, 0, 0);
                 }
+                
+                // Обновляем данные для следующего кадра
+                frameData.gray.copyTo(prevGray);
+                prevPoints = goodNew;
+                frameData.points = goodNew;
+                
+                // Обновляем количество отслеживаемых точек
+                trackedPoints.store(static_cast<int>(goodNew.size()));
+                consecutiveFailures = 0;
             } else {
+                // Нет точек для отслеживания
+                if (consecutiveFailures++ > MAX_CONSECUTIVE_FAILURES) {
+                    // Сбрасываем состояние после серии неудач
+                    firstFrameForTracking = true;
+                    consecutiveFailures = 0;
+                    trackedPoints.store(0);
+                    //cout << "Tracking: reset due to consecutive failures" << endl;
+                }
                 frameData.transformFirstDerivative = TransformParam(0, 0, 0);
             }
             
-            // Обновляем для следующего кадра
-            frameData.gray.copyTo(prevGray);
-            prevPoints = goodNew;//frameData.points;
-            trackedPoints = static_cast<int>(frameData.points.size());
+            // Адаптивная настройка параметров детектора
+            if ((frameData.points.size() < maxCornersConfig / 6) && maxCornersConfig > 60) {
+                maxCornersConfig *= 0.98;
+                maxCornersConfig -= 1;
+                if (maxCornersConfig < 60) {
+                    maxCornersConfig = 60;
+                    qualityLevelConfig *= 0.98;
+                    harrisKConfig *= 0.98;
+                }
+                detector->setMaxFeatures(maxCornersConfig);
+                detector->setQualityLevel(qualityLevelConfig);
+                detector->setK(harrisKConfig);
+            }
+
+            if ((frameData.points.size() > maxCornersConfig * 4 / 5) && (maxCornersConfig < 199)) {
+                maxCornersConfig *= 1.05;
+                maxCornersConfig += 1;
+                if (maxCornersConfig > 200) {
+                    maxCornersConfig = 200;
+                    qualityLevelConfig *= 1.02;
+                    harrisKConfig *= 1.02;
+                }
+                detector->setMaxFeatures(maxCornersConfig);
+                detector->setQualityLevel(qualityLevelConfig);
+                detector->setK(harrisKConfig);
+            }
+
+            auto endTimeDetTrack = chrono::steady_clock::now();
+            auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - startTimeDetTrack);
+            VideoStabilizer::processingTimeDetectionTracking = (VideoStabilizer::processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
             
-            auto endTimeTrack = chrono::steady_clock::now();
-            auto durationTrack = chrono::duration_cast<chrono::microseconds>(endTimeTrack - startTimeTrack);
-            frameData.processingTimeTracktion = durationTrack.count() / 1000.0;
-            // Отправляем в следующую очередь конвейера
-            trackedFramesQueue.push(move(frameData));
+            // Отправляем обработанный кадр в следующую очередь конвейера
+            processedFramesQueue.push(move(frameData));
         }
         
-        cout << "Tracking thread stopped" << endl;
+        cout << "Detection and Tracking thread stopped" << endl;
     }
     
     // ========================= ПОТОК СТАБИЛИЗАЦИИ =========================
@@ -720,7 +692,7 @@ private:
         while (running) {
             
             FrameData frameData;
-            if (!trackedFramesQueue.wait_and_pop(frameData)) {
+            if (!processedFramesQueue.wait_and_pop(frameData)) {
                 if (!running) break;
                 continue;
             }
@@ -751,9 +723,9 @@ private:
                     // Применяем стабилизацию
                     Mat stabilizedFrame, croppedFrame;
 
-                                // Рисуем точки
+                    // Рисуем точки
                     if (!frameData.points.empty()) {
-                        int pointsToShow = min(200, static_cast<int>(frameData.points.size()));
+                        int pointsToShow = min(20, static_cast<int>(frameData.points.size()));
                         for (int i = 0; i < pointsToShow; i++) {
                             Point2f pt = frameData.points[i];
                             Point scaledPt(static_cast<int>(pt.x * compressionConfig),
@@ -774,7 +746,7 @@ private:
 
             auto endTimeStab = chrono::steady_clock::now();
             auto durationStab = chrono::duration_cast<chrono::microseconds>(endTimeStab - startTimeStab);
-            frameData.processingTimeStabilization = durationStab.count() / 1000.0;
+            VideoStabilizer::processingTimeStabilization = (VideoStabilizer::processingTimeStabilization*99.0 + durationStab.count() / 1000.0)/100.0;
             
             // Добавляем кадр в буфер в правильном порядке
             {
@@ -809,7 +781,7 @@ private:
     void displayThread() {
         const string windowName = "Video Stabilization";
         namedWindow(windowName, WINDOW_NORMAL);
-        resizeWindow(windowName, 800, 600);
+        resizeWindow(windowName, 1280, 720);
         
         // Для записи видео (если включено)
         VideoWriter writer;
@@ -874,7 +846,7 @@ private:
                     
                     // Если не нашли кадр, ждем
                     if (!gotFrame) {
-                        frameReadyCV.wait_for(lock, chrono::milliseconds(100));
+                        frameReadyCV.wait_for(lock, chrono::milliseconds(5));
                         continue;
                     }
                 }
@@ -889,27 +861,25 @@ private:
             
             // Создаем информационный overlay
             Mat displayFrame;
-            //frameData.frame.copyTo(displayFrame);
             resize(frameData.frame, displayFrame, Size(a,b));
-            // Добавляем информацию о производительности
 
             auto endTimeDisp = chrono::steady_clock::now();
             auto durationDisp = chrono::duration_cast<chrono::microseconds>(endTimeDisp - startTimeDisp);
-            frameData.processingTimeImshow = durationDisp.count() / 1000.0;
+            VideoStabilizer::processingTimeImshow = (VideoStabilizer::processingTimeImshow*99.0 + durationDisp.count() / 1000.0)/100.0;
 
 
-            string infoText = format("Frame: %d | FPS: %d | Points: %d | of %d | Process: %.1f ms | tauStab: %.1f, | framePart: %1.2f",
-                                    frameData.frameId, fps.load(), trackedPoints.load(), maxCornersConfig,
-                                    frameData.processingTimeCapture, VideoStabilizer::tauStab, VideoStabilizer::framePart);
-            string infoLatencies = format("Capture: %2.1f | Detection: %2.1f | Tracktion: %2.1f | Stabilization: %2.1f | Imshow: %2.1f",
-                                    frameData.processingTimeCapture, frameData.processingTimeDetection, frameData.processingTimeTracktion, 
-                                    frameData.processingTimeStabilization, frameData.processingTimeImshow);
-            // putText(displayFrame, "derivative " + frameData.transformFirstDerivative.printString(), Point(10, 60)*a/800,
-            // FONT_HERSHEY_SIMPLEX, 0.7*a/800, colorGREEN, 2);
-            // putText(displayFrame, "biases" + frameData.transform.printString(), Point(10, 90*a/800),
-            //         FONT_HERSHEY_SIMPLEX, 0.7*a/800, colorGREEN, 2);
-            // putText(displayFrame, "SKO " + frameData.transformSKO.printString(), Point(10, 120*a/800),
-            //        FONT_HERSHEY_SIMPLEX, 0.7*a/800, colorGREEN, 2);
+            string infoText = format("Frame: %d | FPS: %d | Process: %2.1f ms | tauStab: %2.1f, | framePart: %1.2f",
+                                    frameData.frameId, fps.load(),
+                                    VideoStabilizer::processingTimeCapture + 
+                                    VideoStabilizer::processingTimeDetectionTracking + 
+                                    VideoStabilizer::processingTimeStabilization + 
+                                    VideoStabilizer::processingTimeImshow, 
+                                    VideoStabilizer::tauStab, VideoStabilizer::framePart);
+
+            string infoLatencies = format("Capture: %2.1f | Det+Track: %2.1f | Stabilization: %2.1f | Imshow: %2.1f",
+                                    VideoStabilizer::processingTimeCapture, VideoStabilizer::processingTimeDetectionTracking, 
+                                    VideoStabilizer::processingTimeStabilization, VideoStabilizer::processingTimeImshow);
+
             putText(displayFrame, infoText, Point(10, b-50*a/800),
                    FONT_HERSHEY_SIMPLEX, 0.5*a/800, colorGREEN, 2);
             putText(displayFrame, infoLatencies, Point(10, b-100*a/800),
@@ -945,8 +915,8 @@ private:
             
             // Регулируем задержку для поддержания FPS
             auto frameElapsed = chrono::duration_cast<chrono::milliseconds>(now - lastFrameTime);
-            if (frameElapsed.count() < 16) { // ~60 FPS
-                this_thread::sleep_for(chrono::milliseconds(16 - frameElapsed.count()));
+            if (frameElapsed.count() < 5) { // ~60 FPS
+                this_thread::sleep_for(chrono::milliseconds(5 - frameElapsed.count()));
             }
             lastFrameTime = now;
             
@@ -959,7 +929,7 @@ private:
             } else if (key == ' ') { // Пробел - пауза
                 cout << "Paused. Press any key to continue..." << endl;
                 waitKey(0);
-            } else if (key == 'a') { // S - сохранить кадр
+            } else if (key == 'f') { // A - сохранить кадр
                 string filename = format("frame_%06d.jpg", frameData.frameId);
                 imwrite(filename, displayFrame);
                 cout << "Frame saved: " << filename << endl;
@@ -980,7 +950,7 @@ private:
             }
             if (key == 'w' || key == 'W')
             {
-                if (VideoStabilizer::framePart > 0.05)
+                if (VideoStabilizer::framePart > 0.2)
                 {
                     VideoStabilizer::framePart *= 0.99;
                     if (VideoStabilizer::framePart < 0.05)
@@ -1005,20 +975,32 @@ private:
     void loadImage(cv::Mat& image_color, int frame_id, std::string filepath)
     {
         char file[200];
+        std::string filename;
+        
+        // Сначала пробуем PNG
         sprintf(file, "image_0/%06d.png", frame_id);
-        std::string filename = filepath + std::string(file);
-        image_color = cv::imread(filename, IMREAD_COLOR);
-
+        filename = filepath + std::string(file);
+        
+        // Проверяем существование файла перед чтением
+        std::ifstream file_check(filename.c_str());
+        if (file_check.good())
+        {
+            file_check.close();
+            image_color = cv::imread(filename, cv::IMREAD_COLOR);
+        }
+        
+        // Если PNG не найден, пробуем JPG
         if (image_color.empty())
         {
             sprintf(file, "image_0/%06d.jpg", frame_id);
-            std::string filename = filepath + std::string(file);
-            image_color = cv::imread(filename, IMREAD_COLOR);
-            if (image_color.empty())
-            {
-                cerr << "Failed to load image: " << filename << endl;
-            }
+            filename = filepath + std::string(file);
             
+            std::ifstream jpg_check(filename.c_str());
+            if (jpg_check.good())
+            {
+                jpg_check.close();
+                image_color = cv::imread(filename, cv::IMREAD_COLOR);
+            }
         }
     }
 
@@ -1060,13 +1042,18 @@ private:
     void iirAdaptive(TransformParam& transformsFirtsDerivative, TransformParam& transforms, TransformParam& transformSKO, Mat& stabMatrix, 
         double& tauStab, Rect& roi, const int a, const int b, double& kSwitch)
     {
-        if (true ||
-            (abs(transformsFirtsDerivative.dx) - 20.0 < 3.0 * transformSKO.dx) && 
-            (abs(transformsFirtsDerivative.dy) - 20.0 < 3.0 * transformSKO.dy) && 
-            (abs(transformsFirtsDerivative.da) - 10.0 * DEG_TO_RAD < 3.0 * transformSKO.da))
+        if (abs(transformsFirtsDerivative.dx) < 4.0 * transformSKO.dx + a/8)
         {
             transforms.dx = kSwitch * (transforms.dx * (tauStab - 1.0) / tauStab + kSwitch * transformsFirtsDerivative.dx);
+        } 
+
+        if (abs(transformsFirtsDerivative.dy) < 4.0 * transformSKO.dy + b/8)
+        {
             transforms.dy = kSwitch * (transforms.dy * (tauStab - 1.0) / tauStab + kSwitch * transformsFirtsDerivative.dy);
+        }
+
+        if (abs(transformsFirtsDerivative.da) < 4.0 * transformSKO.da + 0.1)
+        {
             transforms.da = kSwitch * (transforms.da * (tauStab - 1.0) / tauStab + kSwitch * transformsFirtsDerivative.da);
         }
 
@@ -1130,7 +1117,6 @@ private:
         transformSKO.dy = (1.0 - 0.1) * transformSKO.dy + 0.1 * abs(transformsFirtsDerivative.dy);
         transformSKO.da = (1.0 - 0.1) * transformSKO.da + 0.1 * abs(transformsFirtsDerivative.da);
 
-        // transforms.getTransform(stabMatrix);
         transforms.getTransformInvert(stabMatrix);
     }
 };
@@ -1141,6 +1127,55 @@ int main() {
     cout << "========================================" << endl;
     cout << "     MULTI-THREADED VIDEO STABILIZER    " << endl;
     cout << "========================================" << endl;
+    
+    // Запрашиваем у пользователя режим работы
+    cout << "Выберите режим работы:" << endl;
+    cout << "1. Использовать камеру (по умолчанию)" << endl;
+    cout << "2. Читать кадры из папки" << endl;
+    cout << "Введите 1 или 2: ";
+    
+    int choice;
+    cin >> choice;
+    
+    bool useCamera = true;
+    string imageFolderPath;
+    
+    if (choice == 2) {
+        useCamera = false;
+        
+        cout << endl << "Введите путь к папке с кадрами:" << endl;
+        cout << "Пример: /home/bananapi/Opencv_projects/dataset/videos/PXL_3/" << endl;
+        cout << "Путь: ";
+        
+        cin.ignore(); // Очищаем буфер ввода
+        getline(cin, imageFolderPath);
+        
+        // Удаляем возможные кавычки в начале и конце
+        if (!imageFolderPath.empty()) {
+            if (imageFolderPath.front() == '"' || imageFolderPath.front() == '\'') {
+                imageFolderPath.erase(0, 1);
+            }
+            if (imageFolderPath.back() == '"' || imageFolderPath.back() == '\'') {
+                imageFolderPath.pop_back();
+            }
+        }
+        
+        // Проверяем, есть ли слеш в конце пути
+        if (!imageFolderPath.empty() && imageFolderPath.back() != '/') {
+            imageFolderPath += '/';
+        }
+        
+        cout << "Путь к кадрам: " << imageFolderPath << endl;
+        
+        // Проверяем существование директории
+        struct stat info;
+        if (stat(imageFolderPath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
+            cerr << "Ошибка: директория не существует или недоступна!\n Использование директории по умолчанию." << endl;
+            imageFolderPath = "/home/bananapi/Opencv_projects/dataset/videos/PXL_3/";
+        }
+    } else {
+        cout << "Используется режим камеры" << endl;
+    }
     
     // Проверка поддержки OpenCL
     // if (ocl::haveOpenCL()) {
@@ -1154,17 +1189,21 @@ int main() {
     VideoStabilizer stabilizer;
     
     // Запуск системы
-    stabilizer.start();
+    stabilizer.start(useCamera, imageFolderPath);
     
     // Ожидание завершения
-    cout << "Press ESC or Q in the window to exit..." << endl;
-    cout << "Press SPACE to pause, S to save frame, D to toggle debug mode" << endl;
+    cout << endl << "Управление:" << endl;
+    cout << "  ESC или Q - выход" << endl;
+    cout << "  Пробел - пауза" << endl;
+    cout << "  F - сохранить текущий кадр" << endl;
+    cout << "  D - переключить режим отладки" << endl;
+    cout << "  S/W - увеличить/уменьшить область кадра" << endl;
     
     // Основной цикл ожидания
     try {
         while (stabilizer.running)
         {
-            this_thread::sleep_for(chrono::seconds(5));
+            this_thread::sleep_for(chrono::seconds(10));
         }
     } catch (...) {
         cout << "Main thread interrupted" << endl;
