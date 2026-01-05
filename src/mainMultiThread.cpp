@@ -36,7 +36,7 @@ const Scalar colorBLACK(0, 0, 0);
 // Настройки системы
 // const bool multiScreen = true;
 const bool recordEnable = false;
-const int compressionConfig = 3; // Сжатие для обработки
+const int compressionConfig = 4; // Сжатие для обработки
 //const int outputResolution = 720; // Разрешение вывода
 
 // Настройки детектора
@@ -453,7 +453,7 @@ private:
             if (compressedSize.width <= 0) compressedSize.width = 1;
             if (compressedSize.height <= 0) compressedSize.height = 1;
             
-            resize(frameData.frame, compressed, compressedSize, 0, 0, INTER_LINEAR);
+            resize(frameData.frame, compressed, compressedSize, 0, 0, INTER_CUBIC);
             cvtColor(compressed, gray, COLOR_BGR2GRAY);
             gray.copyTo(frameData.gray);
             
@@ -684,7 +684,7 @@ private:
     
     // ========================= ПОТОК СТАБИЛИЗАЦИИ =========================
     void stabilizationThread() {
-        const int HISTORY_SIZE = 10;
+        //const int HISTORY_SIZE = 10;
         int framesStabilized = 0;
         
         cout << "Stabilization thread started" << endl;
@@ -744,9 +744,6 @@ private:
                 }
             }
 
-            auto endTimeStab = chrono::steady_clock::now();
-            auto durationStab = chrono::duration_cast<chrono::microseconds>(endTimeStab - startTimeStab);
-            VideoStabilizer::processingTimeStabilization = (VideoStabilizer::processingTimeStabilization*99.0 + durationStab.count() / 1000.0)/100.0;
             
             // Добавляем кадр в буфер в правильном порядке
             {
@@ -771,6 +768,9 @@ private:
                 }
             }
 
+            auto endTimeStab = chrono::steady_clock::now();
+            auto durationStab = chrono::duration_cast<chrono::microseconds>(endTimeStab - startTimeStab);
+            VideoStabilizer::processingTimeStabilization = (VideoStabilizer::processingTimeStabilization*99.0 + durationStab.count() / 1000.0)/100.0;
         }
         
         cout << "Stabilization thread stopped. Stabilized " << framesStabilized 
@@ -863,13 +863,8 @@ private:
             Mat displayFrame;
             resize(frameData.frame, displayFrame, Size(a,b));
 
-            auto endTimeDisp = chrono::steady_clock::now();
-            auto durationDisp = chrono::duration_cast<chrono::microseconds>(endTimeDisp - startTimeDisp);
-            VideoStabilizer::processingTimeImshow = (VideoStabilizer::processingTimeImshow*99.0 + durationDisp.count() / 1000.0)/100.0;
-
-
-            string infoText = format("Frame: %d | FPS: %d | Process: %2.1f ms | tauStab: %2.1f, | framePart: %1.2f",
-                                    frameData.frameId, fps.load(),
+            string infoText = format("FPS: %d | Process: %2.1f ms | tauStab: %2.1f, | framePart: %1.2f",
+                                    fps.load(),
                                     VideoStabilizer::processingTimeCapture + 
                                     VideoStabilizer::processingTimeDetectionTracking + 
                                     VideoStabilizer::processingTimeStabilization + 
@@ -880,21 +875,25 @@ private:
                                     VideoStabilizer::processingTimeCapture, VideoStabilizer::processingTimeDetectionTracking, 
                                     VideoStabilizer::processingTimeStabilization, VideoStabilizer::processingTimeImshow);
 
-            putText(displayFrame, infoText, Point(10, b-50*a/800),
-                   FONT_HERSHEY_SIMPLEX, 0.5*a/800, colorGREEN, 2);
-            putText(displayFrame, infoLatencies, Point(10, b-100*a/800),
-                   FONT_HERSHEY_SIMPLEX, 0.5*a/800, colorGREEN, 2);
+            putText(displayFrame, infoText, Point(10, 50*a/800),
+                   FONT_HERSHEY_SIMPLEX, 0.5*a/800, colorBLUE, 2*a/800);
+            putText(displayFrame, infoLatencies, Point(10, 100*a/800),
+                   FONT_HERSHEY_SIMPLEX, 0.5*a/800, colorBLUE, 2*a/800);
             
             // Добавляем информацию о трансформации
-            string transformText = format("dX: %.1f dY: %.1f dA: %.1f deg",
-                                         frameData.transform.dx, frameData.transform.dy,
-                                         frameData.transform.da * RAD_TO_DEG);
-            putText(displayFrame, transformText, Point(10, 150),
-                   FONT_HERSHEY_SIMPLEX, 0.7, colorYELLOW, 2);
+            // string transformText = format("dX: %.1f dY: %.1f dA: %.1f deg",
+            //                              frameData.transform.dx, frameData.transform.dy,
+            //                              frameData.transform.da * RAD_TO_DEG);
+            // putText(displayFrame, transformText, Point(10, 150),
+            //        FONT_HERSHEY_SIMPLEX, 0.7, colorYELLOW, 2);
             
             // Отображаем
             imshow(windowName, displayFrame);
             
+            auto endTimeDisp = chrono::steady_clock::now();
+            auto durationDisp = chrono::duration_cast<chrono::microseconds>(endTimeDisp - startTimeDisp);
+            VideoStabilizer::processingTimeImshow = (VideoStabilizer::processingTimeImshow*99.0 + durationDisp.count() / 1000.0)/100.0;
+
             // Запись видео
             if (recordEnable && writer.isOpened()) {
                 writer.write(displayFrame);
@@ -1144,7 +1143,7 @@ int main() {
         useCamera = false;
         
         cout << endl << "Введите путь к папке с кадрами:" << endl;
-        cout << "Пример: /home/bananapi/Opencv_projects/dataset/videos/PXL_3/" << endl;
+        cout << "Пример: /home/bananapi/Opencv_projects/dataset/videos/PXL_4K/" << endl;
         cout << "Путь: ";
         
         cin.ignore(); // Очищаем буфер ввода
@@ -1171,7 +1170,7 @@ int main() {
         struct stat info;
         if (stat(imageFolderPath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
             cerr << "Ошибка: директория не существует или недоступна!\n Использование директории по умолчанию." << endl;
-            imageFolderPath = "/home/bananapi/Opencv_projects/dataset/videos/PXL_3/";
+            imageFolderPath = "/home/bananapi/Opencv_projects/dataset/videos/PXL_4K/";
         }
     } else {
         cout << "Используется режим камеры" << endl;
