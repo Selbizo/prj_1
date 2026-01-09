@@ -281,10 +281,10 @@ public:
         // Используем большие ядра Cortex-A73 для тяжелых задач
         if (totalCores >= 6) {
             // A311D имеет 4 больших ядра (2-5) и 2 маленьких (0-1)
-            captureCore = -1;           // Ядро 1: захват
-            detectionCore = -1;         // Ядро 0: детектирование и трекинг (самая легкая задача)
-            stabilizationCore = -1;     // Ядро 5: стабилизация (самая сложная задача)
-            displayCore = -1;           // Ядро 4: отображение
+            captureCore = 2;           // Ядро 1: захват
+            detectionCore = 3;         // Ядро 0: детектирование и трекинг (самая легкая задача)
+            stabilizationCore = 4;     // Ядро 5: стабилизация (самая сложная задача)
+            displayCore = 5;           // Ядро 4: отображение
         } else if (totalCores >= 4) {
             // Если только 4 ядра, распределяем равномерно
             captureCore = 0;
@@ -1093,7 +1093,8 @@ private:
                         }
                     }
 
-                    warpAffine(frameData.frame, stabilizedFrame, frameData.stabMatrix, frameSize);
+                    warpAffine(frameData.frame, stabilizedFrame, frameData.stabMatrix, frameSize, INTER_LINEAR);
+                    
                     croppedFrame = stabilizedFrame(roi);
                     croppedFrame.copyTo(frameData.frame);
                     framesStabilized++;

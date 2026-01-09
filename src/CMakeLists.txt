@@ -36,6 +36,7 @@
 
 
 # Определяем опции
+option(TEST_CODE "Build TEST program" ON)
 option(WITH_MULTICORE "Build multicore version" ON)
 option(WITH_OPENCL "Build OpenCL version" OFF)
 
@@ -43,23 +44,31 @@ option(WITH_OPENCL "Build OpenCL version" OFF)
 
 # Устанавливаем пути
 
-set(OpenCV_DIR "/home/bananapi/opencv4120/opencv/build")
+#set(OpenCV_DIR "/home/bananapi/opencv4120/opencv/build")
 message(STATUS "=== USING STANDARD OPENCV ===")
 
+#find_package(OpenCV REQUIRED)
 find_package(OpenCV REQUIRED)
+
 include_directories(${OpenCV_INCLUDE_DIRS})
 
 # Выбор целевого приложения
-if(WITH_MULTICORE AND WITH_OPENCL)
-add_executable(myapp mainMultiCoreOpenCL.cpp)
-message(STATUS "=== BUILDING OPENCL VERSION ===")
-elseif(WITH_MULTICORE)
-add_executable(myapp mainMultiCore.cpp)
-message(STATUS "=== BUILDING MULTICORE VERSION ===")
-else()
-add_executable(myapp mainMultiThread.cpp)
-message(STATUS "=== BUILDING SINGLECORE VERSION ===")
-endif()
 
+if(TEST_CODE)
+    add_executable(myapp mainTest.cpp)
+    message(STATUS "=== BUILDING TEST PROGRAM ===")
+else()
+
+    if(WITH_MULTICORE AND WITH_OPENCL)
+    add_executable(myapp mainMultiCoreOpenCL.cpp)
+    message(STATUS "=== BUILDING OPENCL VERSION ===")
+    elseif(WITH_MULTICORE)
+    add_executable(myapp mainMultiCore.cpp)
+    message(STATUS "=== BUILDING MULTICORE VERSION ===")
+    else()
+    add_executable(myapp mainMultiThread.cpp)
+    message(STATUS "=== BUILDING SINGLECORE VERSION ===")
+    endif()
+endif()
 target_link_libraries(myapp ${OpenCV_LIBS})
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR})
