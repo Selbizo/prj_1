@@ -23,6 +23,8 @@ using namespace std;
 namespace fs = filesystem;
 
 // ========================= КОНСТАНТЫ И КОНФИГУРАЦИЯ =========================
+const bool USE_OPENCL = true;
+
 const double DEG_TO_RAD = CV_PI / 180.0;
 const double RAD_TO_DEG = 180.0 / CV_PI;
 
@@ -283,10 +285,10 @@ public:
         // Используем большие ядра Cortex-A73 для тяжелых задач
         if (totalCores >= 6) {
             // A311D имеет 4 больших ядра (2-5) и 2 маленьких (0-1)
-            captureCore = -1;           // Ядро 1: захват
-            detectionCore = -1;         // Ядро 0: детектирование и трекинг (самая легкая задача)
-            stabilizationCore = -1;     // Ядро 5: стабилизация (самая сложная задача)
-            displayCore = -1;           // Ядро 4: отображение
+            captureCore = 0;           // Ядро 1: захват
+            detectionCore = 0;         // Ядро 0: детектирование и трекинг (самая легкая задача)
+            stabilizationCore = 0;     // Ядро 5: стабилизация (самая сложная задача)
+            displayCore = 0;           // Ядро 4: отображение
         } else if (totalCores >= 4) {
             // Если только 4 ядра, распределяем равномерно
             captureCore = 0;
@@ -404,6 +406,7 @@ private:
     
     // ========================= ПОТОК ЗАХВАТА КАДРОВ =========================
     void captureThread(bool useCamera, const string& imageFolderPath) {
+        cv::ocl::setUseOpenCL(USE_OPENCL);
         // Если не используем камеру, читаем изображения из файлов
         if (!useCamera) {
             if (imageFolderPath.empty()) {
@@ -625,6 +628,7 @@ private:
     
     // ========================= ОБЪЕДИНЕННЫЙ ПОТОК ДЕТЕКТИРОВАНИЯ И ОТСЛЕЖИВАНИЯ =========================
     void detectionAndTrackingThread() {
+        cv::ocl::setUseOpenCL(USE_OPENCL);
         cout << "Detection and Tracking thread started" << endl;
         
         TermCriteria termcrit(TermCriteria::COUNT | TermCriteria::EPS, 20, 0.03);
@@ -828,6 +832,7 @@ private:
     
     // ========================= ПОТОК СТАБИЛИЗАЦИИ =========================
     void stabilizationThread() {
+        cv::ocl::setUseOpenCL(USE_OPENCL);
         //const int HISTORY_SIZE = 10;
         int framesStabilized = 0;
         
@@ -925,6 +930,7 @@ private:
     
     // ========================= ПОТОК ОТОБРАЖЕНИЯ =========================
     void displayThread() {
+        cv::ocl::setUseOpenCL(USE_OPENCL);
         const string windowName = "Video Stabilization";
         namedWindow(windowName, WINDOW_NORMAL);
         resizeWindow(windowName, 1280, 720);
@@ -1122,6 +1128,7 @@ private:
     // ========================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =========================
     void loadImage(UMat& image_color, int frame_id, std::string filepath)
     {
+        cv::ocl::setUseOpenCL(USE_OPENCL);
         char file[200];
         std::string filename;
         
@@ -1279,10 +1286,11 @@ private:
 
 int main() {
     cout << "========================================" << endl;
-    cout << "     MULTI-THREADED VIDEO STABILIZER    " << endl;
+    cout << " MULTI-THREADED VIDEO STABILIZER OPENCL " << endl;
     cout << "========================================" << endl;
     
     // Отображаем информацию о процессоре
+    cv::ocl::setUseOpenCL(USE_OPENCL);
     int cores = getAvailableCores();
     cout << "CPU cores available: " << cores << endl;
     cout << "CPU architecture: Amlogic A311D (4x Cortex-A73 + 2x Cortex-A53)" << endl;
@@ -1292,7 +1300,8 @@ int main() {
     cout << "1. Использовать камеру (по умолчанию)" << endl;
     cout << "3. Читать кадры из папки PXL_3 (по умолчанию)"<< endl;
     cout << "4. Читать кадры из папки PXL_4K (по умолчанию)"<< endl;
-    cout << "Введите 1, 3 или 4: ";
+    cout << "5. Читать кадры из папки PXL_4K (x86 PC по умолчанию)"<< endl;
+    cout << "Введите 1, 3, 4 или 5: ";
     
     int choice;
     cin >> choice;
@@ -1300,7 +1309,7 @@ int main() {
     bool useCamera = true;
     string imageFolderPath;
     
-    if (choice > 3) {
+    if (choice == 4) {
         useCamera = false;
         
         cout << endl << "Введите путь к папке с кадрами:" << endl;
@@ -1332,6 +1341,40 @@ int main() {
         if (stat(imageFolderPath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
             cerr << "Ошибка: директория не существует или недоступна!\n Использование директории по умолчанию." << endl;
             imageFolderPath = "/home/bananapi/Opencv_projects/dataset/videos/PXL_4K/";
+        }
+    } else 
+    if (choice > 4) {
+        useCamera = false;
+        
+        cout << endl << "Введите путь к папке с кадрами:" << endl;
+        cout << "Пример: /home/selbizo/CV/dataset/videos/PXL_4K/" << endl;
+        cout << "Путь: ";
+        
+        cin.ignore(); // Очищаем буфер ввода
+        getline(cin, imageFolderPath);
+        
+        // Удаляем возможные кавычки в начале и конце
+        if (!imageFolderPath.empty()) {
+            if (imageFolderPath.front() == '"' || imageFolderPath.front() == '\'') {
+                imageFolderPath.erase(0, 1);
+            }
+            if (imageFolderPath.back() == '"' || imageFolderPath.back() == '\'') {
+                imageFolderPath.pop_back();
+            }
+        }
+        
+        // Проверяем, есть ли слеш в конце пути
+        if (!imageFolderPath.empty() && imageFolderPath.back() != '/') {
+            imageFolderPath += '/';
+        }
+        
+        cout << "Путь к кадрам: " << imageFolderPath << endl;
+        
+        // Проверяем существование директории
+        struct stat info;
+        if (stat(imageFolderPath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
+            cerr << "Ошибка: директория не существует или недоступна!\n Использование директории по умолчанию." << endl;
+            imageFolderPath = "/home/selbizo/CV/dataset/videos/PXL_4K/";
         }
     } else 
     
