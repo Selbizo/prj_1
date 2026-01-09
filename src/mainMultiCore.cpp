@@ -282,9 +282,9 @@ public:
         if (totalCores >= 6) {
             // A311D имеет 4 больших ядра (2-5) и 2 маленьких (0-1)
             captureCore = 2;           // Ядро 1: захват
-            detectionCore = 3;         // Ядро 0: детектирование и трекинг (самая легкая задача)
-            stabilizationCore = 4;     // Ядро 5: стабилизация (самая сложная задача)
-            displayCore = 5;           // Ядро 4: отображение
+            detectionCore = -1;         // Ядро 0: детектирование и трекинг (самая легкая задача)
+            stabilizationCore = -1;     // Ядро 5: стабилизация (самая сложная задача)
+            displayCore = -1;           // Ядро 4: отображение
         } else if (totalCores >= 4) {
             // Если только 4 ядра, распределяем равномерно
             captureCore = 0;
@@ -399,223 +399,6 @@ private:
         }
         displayThread();
     }
-    
-    // ========================= ПОТОК ЗАХВАТА КАДРОВ =========================
-    // void captureThread(bool useCamera, const string& imageFolderPath) {
-    //     // Если не используем камеру, читаем изображения из файлов
-    //     if (!useCamera) {
-    //         if (imageFolderPath.empty()) {
-    //             cerr << "File path not specified for image sequence loading" << endl;
-    //             running = false;
-    //             return;
-    //         }
-            
-    //         // Проверяем, существует ли директория
-    //         struct stat info;
-    //         if (stat(imageFolderPath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
-    //             cerr << "Cannot access directory: " << imageFolderPath << endl;
-    //             running = false;
-    //             return;
-    //         }
-            
-    //         cout << "Loading image sequence from: " << imageFolderPath << endl;
-    //     }
-        
-    //     // Для режима камеры оставляем VideoCapture
-    //     VideoCapture cap;
-    //     if (useCamera) {
-    //         int cameraIndex = 0;
-    //         if (videoSource == "0") {
-    //             cameraIndex = 0;
-    //         } else {
-    //             try {
-    //                 cameraIndex = stoi(videoSource);
-    //             } catch (...) {
-    //                 cameraIndex = 0;
-    //             }
-    //         }
-            
-    //         cap.open(cameraIndex);
-    //         if (!cap.isOpened()) {
-    //             cerr << "Cannot open camera " << cameraIndex << endl;
-    //             running = false;
-    //             return;
-    //         }
-    //         cout << "Opened camera " << cameraIndex << " as video source" << endl;
-            
-    //         // Получаем параметры видео с камеры
-    //         frameSize = Size(
-    //             static_cast<int>(cap.get(CAP_PROP_FRAME_WIDTH)),
-    //             static_cast<int>(cap.get(CAP_PROP_FRAME_HEIGHT))
-    //         );
-            
-    //         if (frameSize.width <= 0 || frameSize.height <= 0) {
-    //             frameSize = Size(640, 480);
-    //             cap.set(CAP_PROP_FRAME_WIDTH, frameSize.width);
-    //             cap.set(CAP_PROP_FRAME_HEIGHT, frameSize.height);
-    //         }
-    //     } else {
-    //         // Для режима изображений загружаем первое изображение для определения размеров
-    //         Mat firstFrame;
-    //         loadImage(firstFrame, 0, imageFolderPath);
-            
-    //         if (firstFrame.empty()) {
-    //             cerr << "Failed to load first image, checking other indices..." << endl;
-    //             // Пробуем найти первое доступное изображение
-    //             for (int i = 1; i < 100; i++) {
-    //                 loadImage(firstFrame, i, imageFolderPath);
-    //                 if (!firstFrame.empty()) break;
-    //             }
-                
-    //             if (firstFrame.empty()) {
-    //                 cerr << "Cannot find any images in the sequence" << endl;
-    //                 running = false;
-    //                 return;
-    //             }
-    //         }
-            
-    //         frameSize = Size(firstFrame.cols, firstFrame.rows);
-    //     }
-        
-    //     a = frameSize.width;
-    //     b = frameSize.height;
-        
-    //     // Инициализация ROI
-    //     roi.x = static_cast<int>(a * ((1.0 - framePart) / 2.0));
-    //     roi.y = static_cast<int>(b * ((1.0 - framePart) / 2.0));
-    //     roi.width = static_cast<int>(a * framePart);
-    //     roi.height = static_cast<int>(b * framePart);
-        
-    //     // Убедимся, что ROI находится в границах кадра
-    //     roi.x = max(0, min(roi.x, a - roi.width));
-    //     roi.y = max(0, min(roi.y, b - roi.height));
-    //     roi.width = min(roi.width, a - roi.x);
-    //     roi.height = min(roi.height, b - roi.y);
-        
-    //     cout << "Resolution: " << a << "x" << b << endl;
-    //     cout << "ROI: x=" << roi.x << " y=" << roi.y << " w=" << roi.width << " h=" << roi.height << endl;
-        
-    //     int frameId = 0;
-    //     auto lastFpsTime = chrono::steady_clock::now();
-    //     int frameCount = 0;
-        
-    //     while (running) {
-    //         // Ограничиваем размер очереди, если обработка отстает
-    //         auto startTimeCap = chrono::steady_clock::now();
-    //         int totalLag = rawFramesQueue.size() + processedFramesQueue.size();
-            
-    //         if (totalLag > MAX_PROCESSING_LAG) {
-    //             this_thread::sleep_for(chrono::milliseconds(1));
-    //             //cout << "MAX_PROCESSING_LAG" << endl;
-    //             continue;
-    //         }
-            
-    //         FrameData frameData;
-    //         frameData.frameId = frameId++;
-            
-    //         // Захват кадра в зависимости от режима
-    //         Mat frame;
-    //         bool frameRead = false;
-            
-    //         if (useCamera) {
-    //             // Режим камеры
-    //             frameRead = cap.read(frame);
-    //             if (!frameRead) {
-    //                 cerr << "Failed to read frame from camera" << endl;
-    //                 continue;
-    //             }
-    //         } else {
-    //             // Режим чтения изображений из файлов
-    //             loadImage(frameData.frame, frameData.frameId%1200, imageFolderPath);
-                
-    //             if (frameData.frame.empty()) {
-    //                 // Если изображение не найдено, пробуем следующий индекс
-    //                 cerr << "Failed to load image for frame " << frameData.frameId 
-    //                      << ", trying next..." << endl;
-    //                 loadImage(frameData.frame, frameData.frameId%1200 + 1, imageFolderPath);
-    //                 if (frameData.frame.empty()) {
-    //                     // Если следующее тоже не найдено, возможно, последовательность закончилась
-    //                     cout << "Image sequence ended or no more images available" << endl;
-    //                     running = false; // Останавливаем поток
-    //                     break;
-    //                 }
-    //                 frameData.frameId++; // Увеличиваем ID, если загрузили следующий кадр
-    //             }
-                
-    //             // Конвертируем Mat в Mat для дальнейшей обработки
-    //             frameData.frame.copyTo(frame);
-    //             frameRead = !frame.empty();
-    //         }
-            
-    //         if (!frameRead || frame.empty()) {
-    //             cerr << "Empty frame captured" << endl;
-    //             continue;
-    //         }
-            
-    //         // Если размер изменился, обновляем
-    //         if (frame.cols != a || frame.rows != b) {
-    //             cout << "Frame size changed from " << a << "x" << b 
-    //                  << " to " << frame.cols << "x" << frame.rows << endl;
-    //             a = frame.cols;
-    //             b = frame.rows;
-    //             frameSize = Size(a, b);
-                
-    //             // Обновляем ROI
-    //             roi.x = static_cast<int>(a * ((1.0 - framePart) / 2.0));
-    //             roi.y = static_cast<int>(b * ((1.0 - framePart) / 2.0));
-    //             roi.width = static_cast<int>(a * framePart);
-    //             roi.height = static_cast<int>(b * framePart);
-                
-    //             roi.x = max(0, min(roi.x, a - roi.width));
-    //             roi.y = max(0, min(roi.y, b - roi.height));
-    //             roi.width = min(roi.width, a - roi.x);
-    //             roi.height = min(roi.height, b - roi.y);
-    //         }
-            
-    //         // Для режима камеры копируем в frameData.frame
-    //         if (useCamera) {
-    //             frame.copyTo(frameData.frame);
-    //         }
-            
-    //         // Создаем уменьшенную серую версию для обработки
-    //         Mat compressed, gray;
-    //         Size compressedSize(a / compressionConfig, b / compressionConfig);
-    //         if (compressedSize.width <= 0) compressedSize.width = 1;
-    //         if (compressedSize.height <= 0) compressedSize.height = 1;
-            
-    //         resize(frameData.frame, compressed, compressedSize, 0, 0, INTER_NEAREST);
-    //         cvtColor(compressed, gray, COLOR_BGR2GRAY);
-    //         gray.copyTo(frameData.gray);
-            
-    //         // Добавляем в очередь для обработки
-    //         rawFramesQueue.push(move(frameData));
-            
-    //         // Расчет FPS
-    //         frameCount++;
-    //         auto now = chrono::steady_clock::now();
-    //         auto elapsed = chrono::duration_cast<chrono::milliseconds>(now - lastFpsTime);
-    //         if (elapsed.count() >= 1000) {
-    //             fps = frameCount;
-    //             frameCount = 0;
-    //             lastFpsTime = now;
-    //             if (debugMode && frameId % 100 == 0) {
-    //                 cout << "Capture FPS: " << fps << ", Queue sizes: " 
-    //                      << rawFramesQueue.size() << "/" << processedFramesQueue.size() << endl;
-    //             }
-    //         }
-            
-    //         auto endTimeCap = chrono::steady_clock::now();
-    //         auto durationCap = chrono::duration_cast<chrono::microseconds>(endTimeCap - startTimeCap);
-    //         VideoStabilizer::processingTimeCapture = (VideoStabilizer::processingTimeCapture*199.0 + durationCap.count() / 1000.0)/200.0;
-    //     }
-        
-    //     if (useCamera) {
-    //         cap.release();
-    //     }
-        
-    //     cout << "Capture thread stopped" << endl;
-    // }
-
 
     void captureThread(bool useCamera, const string& imageFolderPath) {
         // Предварительная проверка для режима файлов
@@ -653,7 +436,8 @@ private:
         Size compressedSize;
         
         if (useCamera) {
-            int cameraIndex = (videoSource == "0") ? 0 : stoi(videoSource, nullptr, 10);
+            //int cameraIndex = (videoSource == "0") ? 1 : stoi(videoSource, nullptr, 10);
+            int cameraIndex = 1;
             
             // Оптимизация: отключаем автокалибровку и другие ненужные настройки
             cap.open(cameraIndex, CAP_ANY);
@@ -1008,7 +792,7 @@ private:
                 //maxCornersConfig *= 0.98;
                 //maxCornersConfig -= 1;
                 //if (maxCornersConfig < 60) {
-                    maxCornersConfig = 60;
+                    //maxCornersConfig = 60;
                     qualityLevelConfig *= 0.98;
                     harrisKConfig *= 0.98;
                 //}
@@ -1220,8 +1004,8 @@ private:
             displayedFrames++;
             
             // Создаем информационный overlay
-            //Mat displayFrame;
-            //resize(frameData.frame, displayFrame, Size(a,b), INTER_NEAREST);
+            Mat displayFrame;
+            resize(frameData.frame, displayFrame, Size(a,b), INTER_CUBIC);
 
             string infoText = format("FPS: %d | Process: %2.1f ms | tauStab: %2.1f, | framePart: %1.2f",
                                     fps.load(),
@@ -1235,13 +1019,13 @@ private:
                                     VideoStabilizer::processingTimeCapture, VideoStabilizer::processingTimeDetectionTracking, 
                                     VideoStabilizer::processingTimeStabilization, VideoStabilizer::processingTimeImshow);
 
-            putText(frameData.frame, infoText, Point(10, 50*a/800),
+            putText(displayFrame, infoText, Point(10, 50*a/800),
                    FONT_HERSHEY_SIMPLEX, 0.5*a/800, colorBLUE, 2*a/800);
-            putText(frameData.frame, infoLatencies, Point(10, 100*a/800),
+            putText(displayFrame, infoLatencies, Point(10, 100*a/800),
                    FONT_HERSHEY_SIMPLEX, 0.5*a/800, colorBLUE, 2*a/800);
                         
             // Отображаем
-            imshow(windowName, frameData.frame);
+            imshow(windowName, displayFrame);
             
             auto endTimeDisp = chrono::steady_clock::now();
             auto durationDisp = chrono::duration_cast<chrono::microseconds>(endTimeDisp - startTimeDisp);
