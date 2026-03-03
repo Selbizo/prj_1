@@ -17,12 +17,15 @@
 #include <sys/stat.h>
 #include <pthread.h>
 #include <sched.h>
-#include <unistd.h>  // <-- Добавьте эту строку для sysconf
+#include <unistd.h>
 using namespace cv;
 using namespace std;
 namespace fs = filesystem;
 
 // ========================= КОНСТАНТЫ И КОНФИГУРАЦИЯ =========================
+const bool USE_OPENCL = true;
+const bool USE_OPENCL_FF = true; // Использовать OpenCL для оптического потока
+
 const double DEG_TO_RAD = CV_PI / 180.0;
 const double RAD_TO_DEG = 180.0 / CV_PI;
 
@@ -36,14 +39,12 @@ const Scalar colorWHITE(255, 255, 255);
 const Scalar colorBLACK(0, 0, 0);
 
 // Настройки системы
-// const bool multiScreen = true;
 const bool recordEnable = false;
-const int compressionConfig = 4; // Сжатие для обработки
-//const int outputResolution = 720; // Разрешение вывода
+const int compressionConfig = 4;
 
 // Настройки детектора
-int maxCornersConfig = 200;//200 / compressionConfig;
-double qualityLevelConfig = 0.005;// / compressionConfig;
+int maxCornersConfig = 200;
+double qualityLevelConfig = 0.005;
 const double minDistanceConfig = 3.0;
 int blockSizeConfig = 9;
 const bool useHarrisDetectorConfig = true;
@@ -54,10 +55,9 @@ const int winSizeConfig = blockSizeConfig;
 const int maxLevelConfig = 5;
 const int itersConfig = 10;
 
-// Источник видео (измените на свой)
-const string videoSource = "http://192.168.0.101:4747/video";
+// Источник видео
+const string videoSource = "http://192.168.0.102:4747/video";
 
-// Убрали фиксированный путь к файлам
 string filepath = "";
 
 // ========================= СТРУКТУРЫ ДАННЫХ =========================
@@ -65,30 +65,32 @@ string filepath = "";
 struct TransformParam {
     double dx;
     double dy;
-    double da; // угол в радианах
+    double da;
     
     TransformParam() : dx(0), dy(0), da(0) {}
     TransformParam(double _dx, double _dy, double _da) 
         : dx(_dx), dy(_dy), da(_da) {}
     
-    void getTransform(Mat& T) const {
-        T = Mat::zeros(2, 3, CV_64F); // ИНИЦИАЛИЗИРУЕМ МАТРИЦУ
-        T.at<double>(0, 0) = cos(da);
-        T.at<double>(0, 1) = -sin(da);
-        T.at<double>(0, 2) = dx;
-        T.at<double>(1, 0) = sin(da);
-        T.at<double>(1, 1) = cos(da);
-        T.at<double>(1, 2) = dy;
+    void getTransform(UMat& T) const {
+        T = UMat::zeros(2, 3, CV_64F);
+        Mat T_cpu = T.getMat(ACCESS_WRITE);
+        T_cpu.at<double>(0, 0) = cos(da);
+        T_cpu.at<double>(0, 1) = -sin(da);
+        T_cpu.at<double>(0, 2) = dx;
+        T_cpu.at<double>(1, 0) = sin(da);
+        T_cpu.at<double>(1, 1) = cos(da);
+        T_cpu.at<double>(1, 2) = dy;
     }
     
-    void getTransformInvert(Mat& T) const {
-        T = Mat::zeros(2, 3, CV_64F); // ИНИЦИАЛИЗИРУЕМ МАТРИЦУ
-        T.at<double>(0, 0) = cos(da);
-        T.at<double>(0, 1) = sin(da);
-        T.at<double>(0, 2) = -dx;
-        T.at<double>(1, 0) = -sin(da);
-        T.at<double>(1, 1) = cos(da);
-        T.at<double>(1, 2) = -dy;
+    void getTransformInvert(UMat& T) const {
+        T = UMat::zeros(2, 3, CV_64F);
+        Mat T_cpu = T.getMat(ACCESS_WRITE);
+        T_cpu.at<double>(0, 0) = cos(da);
+        T_cpu.at<double>(0, 1) = sin(da);
+        T_cpu.at<double>(0, 2) = -dx;
+        T_cpu.at<double>(1, 0) = -sin(da);
+        T_cpu.at<double>(1, 1) = cos(da);
+        T_cpu.at<double>(1, 2) = -dy;
     }
     
     void print() const {
@@ -103,17 +105,16 @@ struct TransformParam {
 };
 
 struct FrameData {
-    Mat frame;
-    Mat gray;
+    UMat frame;
+    UMat gray;
     vector<Point2f> points;
     TransformParam transformSKO;
     TransformParam transformFirstDerivative;
     TransformParam transform;
-    Mat stabMatrix;
+    UMat stabMatrix;
     int frameId;
     double timestamp;
     
-
     FrameData() : frameId(0), timestamp(0) {}
 };
 
@@ -159,9 +160,8 @@ public:
     }
 };
 
-// ========================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ПРИВЯЗКИ ЯДЕР =========================
+// ========================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =========================
 
-// Функция для установки affinity потока к определенному ядру CPU
 void setThreadAffinity(pthread_t thread, int cpu_core) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -176,7 +176,6 @@ void setThreadAffinity(pthread_t thread, int cpu_core) {
     }
 }
 
-// Функция для установки affinity текущего потока
 void setCurrentThreadAffinity(int cpu_core) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
@@ -192,53 +191,95 @@ void setCurrentThreadAffinity(int cpu_core) {
     }
 }
 
-// Функция для получения количества доступных CPU ядер
 int getAvailableCores() {
     return sysconf(_SC_NPROCESSORS_ONLN);
+}
+
+// Функция для инициализации OpenCL
+bool initOpenCL() {
+    if (!USE_OPENCL) {
+        cout << "OpenCL disabled by configuration" << endl;
+        return false;
+    }
+    
+    // Включаем OpenCL в OpenCV
+    cv::ocl::setUseOpenCL(true);
+    
+    // Проверяем, доступен ли OpenCL
+    if (!cv::ocl::haveOpenCL()) {
+        cerr << "OpenCL is not available on this system" << endl;
+        return false;
+    }
+    
+    // Получаем информацию об устройствах OpenCL
+    cv::ocl::Context context;
+    if (!context.create(cv::ocl::Device::TYPE_GPU)) {
+        cerr << "Failed to create OpenCL context for GPU, trying CPU..." << endl;
+        if (!context.create(cv::ocl::Device::TYPE_CPU)) {
+            cerr << "Failed to create OpenCL context for CPU" << endl;
+            return false;
+        }
+    }
+    
+    cout << "OpenCL is available and enabled" << endl;
+    cout << "Number of OpenCL devices: " << context.ndevices() << endl;
+    
+    // Выводим информацию о каждом устройстве
+    for (size_t i = 0; i < context.ndevices(); i++) {
+        cv::ocl::Device device = context.device(i);
+        cout << "OpenCL Device " << i << ": " << device.name() << endl;
+        cout << "  Version: " << device.version() << endl;
+    }
+    
+    // Используем первое устройство
+    cv::ocl::Device(context.device(0));
+    
+    // Получаем текущее устройство для дополнительной информации
+    cv::ocl::Device currentDevice;
+    cout << "Current OpenCL device: " << currentDevice.name() << endl;
+    //cout << "  Vendor: " << currentDevice.vendor() << endl;
+    cout << "  Version: " << currentDevice.version() << endl;
+    cout << "  Driver version: " << currentDevice.driverVersion() << endl;
+    
+    cout << "OpenCV OpenCL status:" << endl;
+    cout << "  UMat usage: Enabled" << endl;
+    cout << "  OpenCL enabled: " << (cv::ocl::useOpenCL() ? "Yes" : "No") << endl;
+    
+    return true;
 }
 
 // ========================= ОСНОВНЫЕ ФУНКЦИИ =========================
 
 class VideoStabilizer {
 private:
-    // Очереди конвейерной обработки
-    ThreadSafeQueue rawFramesQueue;          // Захват -> Объединенный поток
-    ThreadSafeQueue processedFramesQueue;    // Объединенный поток -> Стабилизация
+    ThreadSafeQueue rawFramesQueue;
+    ThreadSafeQueue processedFramesQueue;
     
-    // Буфер для сохранения порядка кадров при отображении
     unordered_map<int, FrameData> frameBuffer;
     mutex bufferMutex;
     atomic<int> nextDisplayFrameId{0};
     condition_variable frameReadyCV;
     
-    // Общие ресурсы
     mutex resourcesMutex;
     Ptr<GFTTDetector> detector;
     
-    // Для отслеживания точек между кадрами
-    Mat prevGray;
+    UMat prevGray;
     vector<Point2f> prevPoints;
     bool firstFrameForTracking = true;
     
-    // Параметры стабилизации
     double tauStab;
     double kSwitch;
     double framePart;
     TransformParam oldTransform;
     Rect roi;
     Size frameSize;
-    int a, b; // Ширина и высота кадра
+    int a, b;
     
-    // Статистика
     atomic<int> fps;
-    
     atomic<int> trackedPoints;
     atomic<int> framesProcessed;
-    
-    // Для отладки
     atomic<bool> debugMode;
     
-    // Оптимизация производительности
     atomic<int> processingLag{0};
     const int MAX_PROCESSING_LAG = 6;
     const int MAX_BUFFER_SIZE = 5;
@@ -248,17 +289,22 @@ private:
     double processingTimeStabilization;
     double processingTimeImshow;
 
-    // Привязка ядер для потоков
     int captureCore;
     int detectionCore;
     int stabilizationCore;
     int displayCore;
 
 public:
-    // Потоки обработки
     vector<thread> workers;
-    vector<pthread_t> pthreads; // Для управления affinity
+    vector<pthread_t> pthreads;
     atomic<bool> running;
+
+    // Специализированные UMat для оптимизации памяти
+    UMat grayBuffer;
+    UMat compressedBuffer;
+    UMat maskBuffer;
+    UMat stabilizedBuffer;
+    UMat croppedBuffer;
 
     VideoStabilizer() 
         : running(false), 
@@ -268,38 +314,31 @@ public:
           trackedPoints(0),
           framesProcessed(0),
           debugMode(false),
+          processingTimeCapture(0),
+          processingTimeDetectionTracking(0),
+          processingTimeStabilization(0),
+          processingTimeImshow(0),
           captureCore(-1),
           detectionCore(-1),
           stabilizationCore(-1),
           displayCore(-1) {
         
-        // Определяем доступные ядра
         int totalCores = getAvailableCores();
         cout << "Available CPU cores: " << totalCores << endl;
         
-        // Настраиваем привязку к ядрам для Amlogic A311D (4xA73 + 2xA53)
-        // Используем большие ядра Cortex-A73 для тяжелых задач
+        // Настройка привязки к ядрам
         if (totalCores >= 6) {
-            // A311D имеет 4 больших ядра (2-5) и 2 маленьких (0-1)
-            captureCore = 2;           // Ядро 1: захват
-            detectionCore = -1;         // Ядро 0: детектирование и трекинг (самая легкая задача)
-            stabilizationCore = -1;     // Ядро 5: стабилизация (самая сложная задача)
-            displayCore = -1;           // Ядро 4: отображение
-        } else if (totalCores >= 4) {
-            // Если только 4 ядра, распределяем равномерно
-            captureCore = 0;
-            detectionCore = 1;
-            stabilizationCore = 2;
-            displayCore = 3;
-        } else {
-            // Меньше 4 ядер - не привязываем
             captureCore = -1;
             detectionCore = -1;
             stabilizationCore = -1;
             displayCore = -1;
+        } else if (totalCores >= 4) {
+            captureCore = 0;
+            detectionCore = 1;
+            stabilizationCore = 2;
+            displayCore = 3;
         }
         
-        //Инициализация детектора
         detector = GFTTDetector::create(
             maxCornersConfig, 
             qualityLevelConfig, 
@@ -319,30 +358,19 @@ public:
     void start(bool useCamera, const string& imageFolderPath = "") {
         running = true;
         
-        // Запуск потоков обработки
         workers.emplace_back(&VideoStabilizer::captureThreadWrapper, this, useCamera, imageFolderPath);
         workers.emplace_back(&VideoStabilizer::detectionAndTrackingThreadWrapper, this);
         workers.emplace_back(&VideoStabilizer::stabilizationThreadWrapper, this);
         workers.emplace_back(&VideoStabilizer::displayThreadWrapper, this);
         
-        // Сохраняем pthread_t для установки affinity
         for (auto& worker : workers) {
             pthreads.push_back(worker.native_handle());
         }
         
-        // Устанавливаем affinity для потоков
-        if (captureCore >= 0) {
-            setThreadAffinity(pthreads[0], captureCore);
-        }
-        if (detectionCore >= 0) {
-            setThreadAffinity(pthreads[1], detectionCore);
-        }
-        if (stabilizationCore >= 0) {
-            setThreadAffinity(pthreads[2], stabilizationCore);
-        }
-        if (displayCore >= 0) {
-            setThreadAffinity(pthreads[3], displayCore);
-        }
+        if (captureCore >= 0) setThreadAffinity(pthreads[0], captureCore);
+        if (detectionCore >= 0) setThreadAffinity(pthreads[1], detectionCore);
+        if (stabilizationCore >= 0) setThreadAffinity(pthreads[2], stabilizationCore);
+        if (displayCore >= 0) setThreadAffinity(pthreads[3], displayCore);
         
         cout << "Video stabilizer started with " << workers.size() << " threads" << endl;
         cout << "Core assignment: Capture->" << captureCore 
@@ -354,7 +382,6 @@ public:
     void stop() {
         running = false;
         
-        // Будим все ожидающие потоки
         {
             lock_guard<mutex> lock(bufferMutex);
             frameReadyCV.notify_all();
@@ -367,41 +394,42 @@ public:
         }
         workers.clear();
         pthreads.clear();
+        
+        // Очищаем UMat буферы
+        grayBuffer.release();
+        compressedBuffer.release();
+        maskBuffer.release();
+        stabilizedBuffer.release();
+        croppedBuffer.release();
+        
         cout << "Video stabilizer stopped. Total frames processed: " << framesProcessed << endl;
     }
     
 private:
-    // Обертки для потоков с установкой affinity
     void captureThreadWrapper(bool useCamera, const string& imageFolderPath) {
-        if (captureCore >= 0) {
-            setCurrentThreadAffinity(captureCore);
-        }
+        if (captureCore >= 0) setCurrentThreadAffinity(captureCore);
         captureThread(useCamera, imageFolderPath);
     }
     
     void detectionAndTrackingThreadWrapper() {
-        if (detectionCore >= 0) {
-            setCurrentThreadAffinity(detectionCore);
-        }
+        if (detectionCore >= 0) setCurrentThreadAffinity(detectionCore);
         detectionAndTrackingThread();
     }
     
     void stabilizationThreadWrapper() {
-        if (stabilizationCore >= 0) {
-            setCurrentThreadAffinity(stabilizationCore);
-        }
+        if (stabilizationCore >= 0) setCurrentThreadAffinity(stabilizationCore);
         stabilizationThread();
     }
     
     void displayThreadWrapper() {
-        if (displayCore >= 0) {
-            setCurrentThreadAffinity(displayCore);
-        }
+        if (displayCore >= 0) setCurrentThreadAffinity(displayCore);
         displayThread();
     }
-
+    
+    // ========================= ПОТОК ЗАХВАТА КАДРОВ =========================
     void captureThread(bool useCamera, const string& imageFolderPath) {
-        // Предварительная проверка для режима файлов
+        cv::ocl::setUseOpenCL(USE_OPENCL);
+        
         if (!useCamera) {
             if (imageFolderPath.empty()) {
                 cerr << "File path not specified for image sequence loading" << endl;
@@ -409,217 +437,187 @@ private:
                 return;
             }
             
-            // Используем filesystem API если доступен (C++17)
-            #if __cplusplus >= 201703L
-            error_code ec;
-            if (!filesystem::exists(imageFolderPath, ec) || !filesystem::is_directory(imageFolderPath, ec)) {
-                cerr << "Cannot access directory: " << imageFolderPath << endl;
-                running = false;
-                return;
-            }
-            #else
             struct stat info;
             if (stat(imageFolderPath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
                 cerr << "Cannot access directory: " << imageFolderPath << endl;
                 running = false;
                 return;
             }
-            #endif
             
             cout << "Loading image sequence from: " << imageFolderPath << endl;
         }
         
-        // Переменные вне цикла для оптимизации
         VideoCapture cap;
-        Mat frame, compressed, gray;
-        FrameData frameData;
-        Size compressedSize;
-        
         if (useCamera) {
-            //int cameraIndex = (videoSource == "0") ? 1 : stoi(videoSource, nullptr, 10);
-            int cameraIndex = 1;
-            
-            // Оптимизация: отключаем автокалибровку и другие ненужные настройки
-            cap.open(cameraIndex, CAP_ANY);
-            if (!cap.isOpened()) {
-                cap.open(cameraIndex); // Резервный вызов без флагов
+            int cameraIndex = 0;
+            if (videoSource == "0") {
+                cameraIndex = 0;
+            } else {
+                try {
+                    cameraIndex = stoi(videoSource);
+                } catch (...) {
+                    cameraIndex = 0;
+                }
             }
             
+            cap.open(cameraIndex);
             if (!cap.isOpened()) {
                 cerr << "Cannot open camera " << cameraIndex << endl;
                 running = false;
                 return;
             }
-            
             cout << "Opened camera " << cameraIndex << " as video source" << endl;
             
-            // Настройка параметров камеры для производительности
-            cap.set(CAP_PROP_BUFFERSIZE, 1); // Минимизируем лаг
-            cap.set(CAP_PROP_FOURCC, VideoWriter::fourcc('M', 'J', 'P', 'G')); // Более быстрый кодек
+            frameSize = Size(
+                static_cast<int>(cap.get(CAP_PROP_FRAME_WIDTH)),
+                static_cast<int>(cap.get(CAP_PROP_FRAME_HEIGHT))
+            );
             
-            // Получаем параметры видео
-            int width = static_cast<int>(cap.get(CAP_PROP_FRAME_WIDTH));
-            int height = static_cast<int>(cap.get(CAP_PROP_FRAME_HEIGHT));
-            
-            if (width <= 0 || height <= 0) {
-                width = 640; height = 480;
-                cap.set(CAP_PROP_FRAME_WIDTH, width);
-                cap.set(CAP_PROP_FRAME_HEIGHT, height);
+            if (frameSize.width <= 0 || frameSize.height <= 0) {
+                frameSize = Size(640, 480);
+                cap.set(CAP_PROP_FRAME_WIDTH, frameSize.width);
+                cap.set(CAP_PROP_FRAME_HEIGHT, frameSize.height);
             }
-            
-            frameSize = Size(width, height);
-            a = width;
-            b = height;
         } else {
-            // Для режима изображений загружаем первое изображение
-            Mat firstFrame;
-            bool found = false;
+            UMat firstFrame;
+            loadImage(firstFrame, 0, imageFolderPath);
             
-            // Пробуем загрузить первые N изображений быстрее
-            for (int i = 0; i < 10 && !found; ++i) {
-                loadImage(firstFrame, i, imageFolderPath);
-                if (!firstFrame.empty()) {
-                    found = true;
-                    break;
+            if (firstFrame.empty()) {
+                for (int i = 1; i < 100; i++) {
+                    loadImage(firstFrame, i, imageFolderPath);
+                    if (!firstFrame.empty()) break;
+                }
+                
+                if (firstFrame.empty()) {
+                    cerr << "Cannot find any images in the sequence" << endl;
+                    running = false;
+                    return;
                 }
             }
             
-            if (!found) {
-                cerr << "Cannot find any images in the sequence" << endl;
-                running = false;
-                return;
-            }
-            
             frameSize = Size(firstFrame.cols, firstFrame.rows);
-            a = frameSize.width;
-            b = frameSize.height;
         }
         
-        // Оптимизация вычислений ROI
-        const float roiOffset = (1.0f - framePart) * 0.5f;
-        const int roiX = static_cast<int>(a * roiOffset);
-        const int roiY = static_cast<int>(b * roiOffset);
-        const int roiWidth = static_cast<int>(a * framePart);
-        const int roiHeight = static_cast<int>(b * framePart);
+        a = frameSize.width;
+        b = frameSize.height;
         
-        // Убедимся, что ROI находится в границах кадра
-        roi.x = max(0, min(roiX, a - roiWidth));
-        roi.y = max(0, min(roiY, b - roiHeight));
-        roi.width = min(roiWidth, a - roi.x);
-        roi.height = min(roiHeight, b - roi.y);
+        roi.x = static_cast<int>(a * ((1.0 - framePart) / 2.0));
+        roi.y = static_cast<int>(b * ((1.0 - framePart) / 2.0));
+        roi.width = static_cast<int>(a * framePart);
+        roi.height = static_cast<int>(b * framePart);
+        
+        roi.x = max(0, min(roi.x, a - roi.width));
+        roi.y = max(0, min(roi.y, b - roi.height));
+        roi.width = min(roi.width, a - roi.x);
+        roi.height = min(roi.height, b - roi.y);
         
         cout << "Resolution: " << a << "x" << b << endl;
         cout << "ROI: x=" << roi.x << " y=" << roi.y << " w=" << roi.width << " h=" << roi.height << endl;
         
-        // Подготовка переменных для цикла
         int frameId = 0;
         auto lastFpsTime = chrono::steady_clock::now();
         int frameCount = 0;
         
-        // Предварительное вычисление compressedSize
-        compressedSize = Size(max(1, a / compressionConfig), max(1, b / compressionConfig));
+        // Предварительно выделяем буферы
+        Size compressedSize(a / compressionConfig, b / compressionConfig);
+        if (compressedSize.width <= 0) compressedSize.width = 1;
+        if (compressedSize.height <= 0) compressedSize.height = 1;
+        
+        compressedBuffer.create(compressedSize, CV_8UC3);
+        grayBuffer.create(compressedSize, CV_8UC1);
         
         while (running) {
-            // Быстрая проверка очереди
-            if (rawFramesQueue.size() + processedFramesQueue.size() > MAX_PROCESSING_LAG) {
-                this_thread::yield(); // Более эффективно, чем sleep
+            auto startTimeCap = chrono::steady_clock::now();
+            int totalLag = rawFramesQueue.size() + processedFramesQueue.size();
+            
+            if (totalLag > MAX_PROCESSING_LAG) {
+                this_thread::sleep_for(chrono::milliseconds(1));
                 continue;
             }
-            auto startTimeCap = chrono::steady_clock::now();
+            
+            FrameData frameData;
             frameData.frameId = frameId++;
             
-            // Захват кадра
             bool frameRead = false;
             
             if (useCamera) {
-                // Используем более быстрый метод grab/retrieve
-                if (cap.grab()) {
-                    cap.retrieve(frame);
-                    frameRead = !frame.empty();
+                Mat frame_cpu;
+                frameRead = cap.read(frame_cpu);
+                if (frameRead) {
+                    frame_cpu.copyTo(frameData.frame);
+                }
+                
+                if (!frameRead) {
+                    cerr << "Failed to read frame from camera" << endl;
+                    continue;
                 }
             } else {
-                // Оптимизация загрузки изображений
-                int imageIndex = frameData.frameId % 550;
-                loadImage(frameData.frame, imageIndex, imageFolderPath);
+                loadImage(frameData.frame, frameData.frameId%1200, imageFolderPath);
                 
                 if (frameData.frame.empty()) {
-                    // Пробуем следующий индекс только один раз
-                    loadImage(frameData.frame, imageIndex + 1, imageFolderPath);
+                    loadImage(frameData.frame, frameData.frameId%1200 + 1, imageFolderPath);
                     if (frameData.frame.empty()) {
-                        cout << "Image sequence ended" << endl;
+                        cout << "Image sequence ended or no more images available" << endl;
                         running = false;
                         break;
                     }
-                    ++frameData.frameId;
+                    frameData.frameId++;
                 }
                 
-                frame = frameData.frame; // Простое присвоение (без копирования данных)
-                frameRead = true;
+                frameRead = !frameData.frame.empty();
             }
             
-            if (!frameRead || frame.empty()) {
-                if (useCamera) {
-                    cerr << "Empty frame captured" << endl;
-                }
+            if (!frameRead || frameData.frame.empty()) {
                 continue;
             }
             
-            // Проверка изменения размера (только если изменился)
-            if (frame.cols != a || frame.rows != b) {
-                a = frame.cols;
-                b = frame.rows;
+            if (frameData.frame.cols != a || frameData.frame.rows != b) {
+                cout << "Frame size changed from " << a << "x" << b 
+                     << " to " << frameData.frame.cols << "x" << frameData.frame.rows << endl;
+                a = frameData.frame.cols;
+                b = frameData.frame.rows;
                 frameSize = Size(a, b);
                 
-                // Обновляем ROI с новыми значениями
-                const int newRoiX = static_cast<int>(a * roiOffset);
-                const int newRoiY = static_cast<int>(b * roiOffset);
-                const int newRoiWidth = static_cast<int>(a * framePart);
-                const int newRoiHeight = static_cast<int>(b * framePart);
+                roi.x = static_cast<int>(a * ((1.0 - framePart) / 2.0));
+                roi.y = static_cast<int>(b * ((1.0 - framePart) / 2.0));
+                roi.width = static_cast<int>(a * framePart);
+                roi.height = static_cast<int>(b * framePart);
                 
-                roi.x = max(0, min(newRoiX, a - newRoiWidth));
-                roi.y = max(0, min(newRoiY, b - newRoiHeight));
-                roi.width = min(newRoiWidth, a - roi.x);
-                roi.height = min(newRoiHeight, b - roi.y);
+                roi.x = max(0, min(roi.x, a - roi.width));
+                roi.y = max(0, min(roi.y, b - roi.height));
+                roi.width = min(roi.width, a - roi.x);
+                roi.height = min(roi.height, b - roi.y);
                 
-                // Обновляем compressedSize
-                compressedSize = Size(max(1, a / compressionConfig), max(1, b / compressionConfig));
-                
-                cout << "Frame size changed to " << a << "x" << b << endl;
+                // Обновляем размер буферов
+                compressedSize = Size(a / compressionConfig, b / compressionConfig);
+                compressedBuffer.create(compressedSize, CV_8UC3);
+                grayBuffer.create(compressedSize, CV_8UC1);
             }
             
-            // Копируем кадр для режима камеры
-            if (useCamera) {
-                frame.copyTo(frameData.frame);
-            }
+            // Используем OpenCL для операций с изображениями
+            // Сжатие и конвертация в градации серого на GPU
+            resize(frameData.frame, compressedBuffer, compressedSize, 0, 0, INTER_CUBIC);
+            cvtColor(compressedBuffer, grayBuffer, COLOR_BGR2GRAY);
+            grayBuffer.copyTo(frameData.gray);
             
-            // Создаем уменьшенную серую версию
-            resize(frameData.frame, compressed, compressedSize, 0, 0, INTER_AREA);
-            cvtColor(compressed, gray, COLOR_BGR2GRAY);
-            frameData.gray = gray; // Move семантика
-            
-            // Добавляем в очередь
             rawFramesQueue.push(move(frameData));
             
-            // Оптимизированный расчет FPS
-            if (++frameCount >= 50) { // Проверяем FPS каждые 30 кадров
-                auto now = chrono::steady_clock::now();
-                auto elapsed = chrono::duration_cast<chrono::milliseconds>(now - lastFpsTime);
-                
-                if (elapsed.count() >= 1000) {
-                    fps = static_cast<int>(frameCount * 1000.0 / elapsed.count());
-                    frameCount = 0;
-                    lastFpsTime = now;
-                    
-                    if (debugMode) {
-                        cout << "Capture FPS: " << fps << ", Queues: " 
-                            << rawFramesQueue.size() << "/" << processedFramesQueue.size() << endl;
-                    }
+            frameCount++;
+            auto now = chrono::steady_clock::now();
+            auto elapsed = chrono::duration_cast<chrono::milliseconds>(now - lastFpsTime);
+            if (elapsed.count() >= 1000) {
+                fps = frameCount;
+                frameCount = 0;
+                lastFpsTime = now;
+                if (debugMode && frameId % 100 == 0) {
+                    cout << "Capture FPS: " << fps << ", Queue sizes: " 
+                         << rawFramesQueue.size() << "/" << processedFramesQueue.size() << endl;
                 }
             }
+            
             auto endTimeCap = chrono::steady_clock::now();
             auto durationCap = chrono::duration_cast<chrono::microseconds>(endTimeCap - startTimeCap);
-            VideoStabilizer::processingTimeCapture = (VideoStabilizer::processingTimeCapture*199.0 + durationCap.count() / 1000.0)/200.0;
-
+            processingTimeCapture = (processingTimeCapture*19.0 + durationCap.count() / 1000.0)/20.0;
         }
         
         if (useCamera) {
@@ -629,14 +627,20 @@ private:
         cout << "Capture thread stopped" << endl;
     }
     
-    // ========================= ОБЪЕДИНЕННЫЙ ПОТОК ДЕТЕКТИРОВАНИЯ И ОТСЛЕЖИВАНИЯ =========================
+    // ========================= ПОТОК ДЕТЕКТИРОВАНИЯ И ОТСЛЕЖИВАНИЯ =========================
     void detectionAndTrackingThread() {
+        cv::ocl::setUseOpenCL(USE_OPENCL);
         cout << "Detection and Tracking thread started" << endl;
         
         TermCriteria termcrit(TermCriteria::COUNT | TermCriteria::EPS, 20, 0.03);
         Size winSize(winSizeConfig, winSizeConfig);
         int consecutiveFailures = 0;
         const int MAX_CONSECUTIVE_FAILURES = 10;
+        
+        // Для OpenCL оптического потока
+        vector<Point2f> nextPoints;
+        vector<uchar> status;
+        vector<float> err;
         
         while (running) {
             FrameData frameData;
@@ -647,76 +651,115 @@ private:
             
             auto startTimeDetTrack = chrono::steady_clock::now();
             
-            // Часть 1: Детектирование точек (только если нужно)
             if (firstFrameForTracking || prevPoints.empty() || trackedPoints.load() < maxCornersConfig / 5) {
-                // Детектирование точек
-                Mat mask = Mat::zeros(frameData.gray.size(), CV_8U);
-                int marginX = frameData.gray.cols / 8;
-                int marginY = frameData.gray.rows / 8;
-                rectangle(mask, 
-                        Rect(marginX, marginY, 
-                            frameData.gray.cols - 2 * marginX, 
-                            frameData.gray.rows - 2 * marginY),
-                        Scalar(255), FILLED);
-                
-                vector<KeyPoint> keypoints;
-                try {
-                    detector->detect(frameData.gray, keypoints, mask);
-                } catch (const exception& e) {
-                    cerr << "Error in detector: " << e.what() << endl;
-                    continue;
+                UMat mask;
+                if (frameData.gray.size().width > 0 && frameData.gray.size().height > 0) {
+                    // Создаем маску на GPU
+                    mask = UMat::zeros(frameData.gray.size(), CV_8U);
+                    int marginX = frameData.gray.cols / 8;
+                    int marginY = frameData.gray.rows / 8;
+                    
+                    // Используем OpenCL для рисования прямоугольника
+                    rectangle(mask, 
+                            Rect(marginX, marginY, 
+                                frameData.gray.cols - 2 * marginX, 
+                                frameData.gray.rows - 2 * marginY),
+                            Scalar(255), FILLED);
+                    
+                    vector<KeyPoint> keypoints;
+                    try {
+                        // Конвертируем UMat в Mat для детектора (детектор не поддерживает UMat)
+                        Mat gray_cpu = frameData.gray.getMat(ACCESS_READ);
+                        Mat mask_cpu = mask.getMat(ACCESS_READ);
+                        detector->detect(gray_cpu, keypoints, mask_cpu);
+                    } catch (const exception& e) {
+                        cerr << "Error in detector: " << e.what() << endl;
+                        continue;
+                    }
+                    
+                    for (const auto& kp : keypoints) {
+                        frameData.points.push_back(kp.pt);
+                    }
+                    
+                    if (frameData.points.size() > maxCornersConfig * 4) {
+                        frameData.points.erase(frameData.points.begin(), 
+                                    frameData.points.begin() + (frameData.points.size() - maxCornersConfig));
+                    }
+                    
+                    removeFramePoints(frameData.points, minDistanceConfig * 0.8);
                 }
-                
-                // Конвертация KeyPoint в Point2f
-                for (const auto& kp : keypoints) {
-                    frameData.points.push_back(kp.pt);
-                }
-                
-                // Ограничение размера пула точек
-                if (frameData.points.size() > maxCornersConfig * 4) {
-                    frameData.points.erase(frameData.points.begin(), 
-                                frameData.points.begin() + (frameData.points.size() - maxCornersConfig));
-                }
-                
-                // Удаление слишком близких точек
-                removeFramePoints(frameData.points, minDistanceConfig * 0.8);
                 
                 if (firstFrameForTracking) {
-                    // Первый кадр - просто сохраняем точки
                     frameData.gray.copyTo(prevGray);
                     prevPoints = frameData.points;
                     firstFrameForTracking = false;
                     trackedPoints.store(static_cast<int>(prevPoints.size()));
                     frameData.transformFirstDerivative = TransformParam(0, 0, 0);
                     
-                    // Отправляем кадр дальше
                     processedFramesQueue.push(move(frameData));
                     
                     auto endTimeDetTrack = chrono::steady_clock::now();
                     auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - startTimeDetTrack);
-                    VideoStabilizer::processingTimeDetectionTracking = (VideoStabilizer::processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
+                    processingTimeDetectionTracking = (processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
                     
                     continue;
                 }
             }
             
-            // Часть 2: Отслеживание точек (если это не первый кадр)
             if (!firstFrameForTracking && !prevPoints.empty() && !frameData.gray.empty() && !prevGray.empty()) {
-                vector<Point2f> nextPoints;
-                vector<uchar> status;
-                vector<float> err;
+                nextPoints.clear();
+                status.clear();
+                err.clear();
                 
                 try {
-                    calcOpticalFlowPyrLK(
-                        prevGray, frameData.gray,
-                        prevPoints, nextPoints,
-                        status, err,
-                        winSize, maxLevelConfig,
-                        termcrit, 0, 0.001
-                    );
+                    if (USE_OPENCL_FF && cv::ocl::useOpenCL()) {
+                        // Используем UMat для оптического потока (OpenCL)
+                        // OpenCV автоматически использует OpenCL для calcOpticalFlowPyrLK с UMat
+                        
+                        // Конвертируем vector<Point2f> в UMat
+                        UMat prevPtsUMat, nextPtsUMat;
+                        Mat(prevPoints).copyTo(prevPtsUMat);
+                        
+                        // Оптический поток с UMat - будет использовать OpenCL если доступно
+                        calcOpticalFlowPyrLK(
+                            prevGray,           // UMat
+                            frameData.gray,     // UMat
+                            prevPtsUMat,        // UMat
+                            nextPtsUMat,        // UMat
+                            status, err,
+                            winSize, maxLevelConfig,
+                            termcrit, 0, 0.001
+                        );
+                        
+                        // Конвертируем обратно в vector<Point2f>
+                        if (!nextPtsUMat.empty()) {
+                            Mat nextPtsMat = nextPtsUMat.getMat(ACCESS_READ);
+                            nextPoints.assign((Point2f*)nextPtsMat.data, 
+                                             (Point2f*)nextPtsMat.data + nextPtsMat.total());
+                        }
+                        
+                        if (debugMode && frameData.frameId % 30 == 0) {
+                            cout << "OpticalFlow using OpenCL: Yes" << endl;
+                        }
+                    } else {
+                        // CPU версия
+                        Mat prevGray_cpu = prevGray.getMat(ACCESS_READ);
+                        Mat gray_cpu = frameData.gray.getMat(ACCESS_READ);
+                        
+                        calcOpticalFlowPyrLK(
+                            prevGray_cpu, gray_cpu,
+                            prevPoints, nextPoints,
+                            status, err,
+                            winSize, maxLevelConfig,
+                            termcrit, 0, 0.001
+                        );
+                        
+                        if (debugMode && frameData.frameId % 30 == 0) {
+                            cout << "OpticalFlow using OpenCL: No" << endl;
+                        }
+                    }
                 } catch (const exception& e) {
                     cerr << "Error in optical flow: " << e.what() << endl;
-                    // Сбрасываем состояние
                     frameData.gray.copyTo(prevGray);
                     frameData.points.clear();
                     prevPoints.clear();
@@ -725,7 +768,6 @@ private:
                     continue;
                 }
                 
-                // Фильтрация хороших точек
                 vector<Point2f> goodNew;
                 vector<Point2f> goodOld;
                 
@@ -738,22 +780,20 @@ private:
                     }
                 }
                 
-                // Оценка аффинного преобразования между кадрами
                 if (goodCount >= 6) {
-                    Mat T;
+                    Mat T_cpu;
                     try {
-                        T = estimateAffine2D(goodOld, goodNew, noArray(), RANSAC, 3.0);
+                        T_cpu = estimateAffine2D(goodOld, goodNew, noArray(), RANSAC, 3.0);
                     } catch (const exception& e) {
                         cerr << "Error in estimateAffine2D: " << e.what() << endl;
-                        T = Mat();
+                        T_cpu = Mat();
                     }
                     
-                    if (!T.empty() && T.rows == 2 && T.cols == 3) {
-                        // Извлечение параметров трансформации
-                        double dx = T.at<double>(0, 2) * compressionConfig;
-                        double dy = T.at<double>(1, 2) * compressionConfig;
-                        double da = atan2(T.at<double>(1, 0), 
-                                        T.at<double>(0, 0));
+                    if (!T_cpu.empty() && T_cpu.rows == 2 && T_cpu.cols == 3) {
+                        double dx = T_cpu.at<double>(0, 2) * compressionConfig;
+                        double dy = T_cpu.at<double>(1, 2) * compressionConfig;
+                        double da = atan2(T_cpu.at<double>(1, 0), 
+                                        T_cpu.at<double>(0, 0));
                         
                         frameData.transformFirstDerivative = TransformParam(dx, dy, da);
                         
@@ -767,58 +807,40 @@ private:
                     frameData.transformFirstDerivative = TransformParam(0, 0, 0);
                 }
                 
-                // Обновляем данные для следующего кадра
                 frameData.gray.copyTo(prevGray);
                 prevPoints = goodNew;
                 frameData.points = goodNew;
                 
-                // Обновляем количество отслеживаемых точек
                 trackedPoints.store(static_cast<int>(goodNew.size()));
                 consecutiveFailures = 0;
             } else {
-                // Нет точек для отслеживания
                 if (consecutiveFailures++ > MAX_CONSECUTIVE_FAILURES) {
-                    // Сбрасываем состояние после серии неудач
                     firstFrameForTracking = true;
                     consecutiveFailures = 0;
                     trackedPoints.store(0);
-                    //cout << "Tracking: reset due to consecutive failures" << endl;
                 }
                 frameData.transformFirstDerivative = TransformParam(0, 0, 0);
             }
             
-            // Адаптивная настройка параметров детектора
             if ((frameData.points.size() < maxCornersConfig / 6)) {
-                //maxCornersConfig *= 0.98;
-                //maxCornersConfig -= 1;
-                //if (maxCornersConfig < 60) {
-                    //maxCornersConfig = 60;
-                    qualityLevelConfig *= 0.98;
-                    harrisKConfig *= 0.98;
-                //}
-                //detector->setMaxFeatures(maxCornersConfig);
+                maxCornersConfig = 60;
+                qualityLevelConfig *= 0.98;
+                harrisKConfig *= 0.98;
                 detector->setQualityLevel(qualityLevelConfig);
                 detector->setK(harrisKConfig);
             }
 
             if ((frameData.points.size() > maxCornersConfig * 4 / 5)) {
-                //maxCornersConfig *= 1.05;
-                //maxCornersConfig += 1;
-                //if (maxCornersConfig > 200) {
-                    //maxCornersConfig = 200;
-                    qualityLevelConfig *= 1.02;
-                    harrisKConfig *= 1.02;
-                //}
-                //detector->setMaxFeatures(maxCornersConfig);
+                qualityLevelConfig *= 1.02;
+                harrisKConfig *= 1.02;
                 detector->setQualityLevel(qualityLevelConfig);
                 detector->setK(harrisKConfig);
             }
 
             auto endTimeDetTrack = chrono::steady_clock::now();
             auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - startTimeDetTrack);
-            VideoStabilizer::processingTimeDetectionTracking = (VideoStabilizer::processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
+            processingTimeDetectionTracking = (processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
             
-            // Отправляем обработанный кадр в следующую очередь конвейера
             processedFramesQueue.push(move(frameData));
         }
         
@@ -827,13 +849,12 @@ private:
     
     // ========================= ПОТОК СТАБИЛИЗАЦИИ =========================
     void stabilizationThread() {
-        //const int HISTORY_SIZE = 10;
+        cv::ocl::setUseOpenCL(USE_OPENCL);
         int framesStabilized = 0;
         
         cout << "Stabilization thread started" << endl;
         
         while (running) {
-            
             FrameData frameData;
             if (!processedFramesQueue.wait_and_pop(frameData)) {
                 if (!running) break;
@@ -841,46 +862,50 @@ private:
             }
 
             auto startTimeStab = chrono::steady_clock::now();
+            
             if (!frameData.frame.empty()) {
                 try {
-                    if (VideoStabilizer::kSwitch < 0.01) 
-                        VideoStabilizer::kSwitch = 0.01;
-                    if (VideoStabilizer::kSwitch < 1.0)
-                    {
-                        VideoStabilizer::kSwitch *= 1.06;
-                        VideoStabilizer::kSwitch += 0.005;
+                    if (kSwitch < 0.01) kSwitch = 0.01;
+                    if (kSwitch < 1.0) {
+                        kSwitch *= 1.06;
+                        kSwitch += 0.005;
+                    } else if (kSwitch > 1.0) {
+                        kSwitch = 1.0;
                     }
-                    else if (VideoStabilizer::kSwitch > 1.0)
-                        VideoStabilizer::kSwitch = 1.0;
                     
-
-                    VideoStabilizer::kSwitch = 1.0;
+                    kSwitch = 1.0;
                     framesProcessed++;
                     
-                    // Стабилизация
                     iirAdaptive(frameData.transformFirstDerivative, oldTransform, 
-                               frameData.transformSKO, frameData.stabMatrix, VideoStabilizer::tauStab, VideoStabilizer::roi, a, b, VideoStabilizer::kSwitch);
+                               frameData.transformSKO, frameData.stabMatrix, tauStab, roi, a, b, kSwitch);
                     
                     frameData.transform = oldTransform;
                     
-                    // Применяем стабилизацию
-                    Mat stabilizedFrame, croppedFrame;
-
-                    // Рисуем точки
+                    // Рисуем точки на GPU? Не поддерживается напрямую, придется на CPU
                     if (!frameData.points.empty()) {
                         int pointsToShow = min(300, static_cast<int>(frameData.points.size()));
+                        Mat frame_cpu = frameData.frame.getMat(ACCESS_WRITE);
                         for (int i = 0; i < pointsToShow; i++) {
                             Point2f pt = frameData.points[i];
                             Point scaledPt(static_cast<int>(pt.x * compressionConfig),
                                         static_cast<int>(pt.y * compressionConfig));
-                            circle(frameData.frame, scaledPt, 2, colorRED, -1);
+                            circle(frame_cpu, scaledPt, 2, Scalar(48, 62, 255), -1);
                         }
                     }
 
-                    warpAffine(frameData.frame, stabilizedFrame, frameData.stabMatrix, frameSize, INTER_LINEAR);
+                    // Используем OpenCL для warpAffine
+                    if (stabilizedBuffer.empty() || stabilizedBuffer.size() != frameSize) {
+                        stabilizedBuffer.create(frameSize, frameData.frame.type());
+                    }
+                    warpAffine(frameData.frame, stabilizedBuffer, frameData.stabMatrix, frameSize);
                     
-                    croppedFrame = stabilizedFrame(roi);
-                    croppedFrame.copyTo(frameData.frame);
+                    // Кроппинг на GPU
+                    if (croppedBuffer.empty() || croppedBuffer.size() != Size(roi.width, roi.height)) {
+                        croppedBuffer.create(Size(roi.width, roi.height), frameData.frame.type());
+                    }
+                    croppedBuffer = stabilizedBuffer(roi);
+                    croppedBuffer.copyTo(frameData.frame);
+                    
                     framesStabilized++;
                     
                 } catch (const exception& e) {
@@ -888,18 +913,12 @@ private:
                 }
             }
 
-            
-            // Добавляем кадр в буфер в правильном порядке
             {
                 lock_guard<mutex> lock(bufferMutex);
                 frameBuffer[frameData.frameId] = move(frameData);
-                
-                // Уведомляем поток отображения
                 frameReadyCV.notify_one();
                 
-                // // Очищаем старые кадры из буфера
                 if (frameBuffer.size() > MAX_BUFFER_SIZE * 2) {
-                    // Удаляем самые старые кадры
                     vector<int> toRemove;
                     for (auto& pair : frameBuffer) {
                         if (pair.first < nextDisplayFrameId - 5) {
@@ -914,7 +933,7 @@ private:
 
             auto endTimeStab = chrono::steady_clock::now();
             auto durationStab = chrono::duration_cast<chrono::microseconds>(endTimeStab - startTimeStab);
-            VideoStabilizer::processingTimeStabilization = (VideoStabilizer::processingTimeStabilization*199.0 + durationStab.count() / 1000.0)/200.0;
+            processingTimeStabilization = (processingTimeStabilization*19.0 + durationStab.count() / 1000.0)/20.0;
         }
         
         cout << "Stabilization thread stopped. Stabilized " << framesStabilized 
@@ -923,11 +942,11 @@ private:
     
     // ========================= ПОТОК ОТОБРАЖЕНИЯ =========================
     void displayThread() {
+        cv::ocl::setUseOpenCL(USE_OPENCL);
         const string windowName = "Video Stabilization";
         namedWindow(windowName, WINDOW_NORMAL);
         resizeWindow(windowName, 1280, 720);
         
-        // Для записи видео (если включено)
         VideoWriter writer;
         if (recordEnable) {
             writer.open("stabilized_output.mp4", 
@@ -944,6 +963,9 @@ private:
         auto lastDisplayTime = chrono::steady_clock::now();
         auto lastFrameTime = chrono::steady_clock::now();
         
+        // UMat для отображения
+        UMat displayUMat;
+        
         cout << "Display thread started" << endl;
         
         while (running) {
@@ -954,7 +976,6 @@ private:
             {
                 unique_lock<mutex> lock(bufferMutex);
                 
-                // Ждем, пока появится следующий кадр в правильном порядке
                 auto it = frameBuffer.find(nextDisplayFrameId);
                 if (it != frameBuffer.end()) {
                     frameData = move(it->second);
@@ -962,9 +983,7 @@ private:
                     nextDisplayFrameId++;
                     gotFrame = true;
                 } else {
-                    // Проверяем, есть ли следующий кадр в буфере
                     if (!frameBuffer.empty()) {
-                        // Находим следующий доступный кадр
                         int nextAvailable = -1;
                         for (auto& pair : frameBuffer) {
                             if (pair.first >= nextDisplayFrameId) {
@@ -974,7 +993,6 @@ private:
                             }
                         }
                         
-                        // Если нашли близкий кадр, перескакиваем на него
                         if (nextAvailable != -1 && nextAvailable - nextDisplayFrameId < 3) {
                             frameData = move(frameBuffer[nextAvailable]);
                             frameBuffer.erase(nextAvailable);
@@ -988,7 +1006,6 @@ private:
                         }
                     }
                     
-                    // Если не нашли кадр, ждем
                     if (!gotFrame) {
                         frameReadyCV.wait_for(lock, chrono::milliseconds(5));
                         continue;
@@ -1003,40 +1020,43 @@ private:
             
             displayedFrames++;
             
-            // Создаем информационный overlay
-            Mat displayFrame;
-            resize(frameData.frame, displayFrame, Size(a,b), INTER_CUBIC);
+            // Используем OpenCL для изменения размера
+            if (displayUMat.empty() || displayUMat.size() != Size(a, b)) {
+                displayUMat.create(Size(a, b), frameData.frame.type());
+            }
+            resize(frameData.frame, displayUMat, Size(a, b), 0, 0, INTER_AREA);
 
-            string infoText = format("FPS: %d | Process: %2.1f ms | tauStab: %2.1f, | framePart: %1.2f",
+            // Конвертируем UMat в Mat для отображения (imshow требует Mat)
+            Mat displayFrame_cpu = displayUMat.getMat(ACCESS_READ);
+            
+            string infoText = format("FPS: %d | Process: %2.1f ms | tauStab: %2.1f | framePart: %1.2f | OpenCL: %s",
                                     fps.load(),
-                                    VideoStabilizer::processingTimeCapture + 
-                                    VideoStabilizer::processingTimeDetectionTracking + 
-                                    VideoStabilizer::processingTimeStabilization + 
-                                    VideoStabilizer::processingTimeImshow, 
-                                    VideoStabilizer::tauStab, VideoStabilizer::framePart);
+                                    processingTimeCapture + 
+                                    processingTimeDetectionTracking + 
+                                    processingTimeStabilization + 
+                                    processingTimeImshow, 
+                                    tauStab, framePart,
+                                    cv::ocl::useOpenCL() ? "ON" : "OFF");
 
             string infoLatencies = format("Capture: %2.1f | Det+Track: %2.1f | Stabilization: %2.1f | Imshow: %2.1f",
-                                    VideoStabilizer::processingTimeCapture, VideoStabilizer::processingTimeDetectionTracking, 
-                                    VideoStabilizer::processingTimeStabilization, VideoStabilizer::processingTimeImshow);
+                                    processingTimeCapture, processingTimeDetectionTracking, 
+                                    processingTimeStabilization, processingTimeImshow);
 
-            putText(displayFrame, infoText, Point(10, 50*a/800),
+            putText(displayFrame_cpu, infoText, Point(10, 50*a/800),
                    FONT_HERSHEY_SIMPLEX, 0.5*a/800, colorBLUE, 2*a/800);
-            putText(displayFrame, infoLatencies, Point(10, 100*a/800),
+            putText(displayFrame_cpu, infoLatencies, Point(10, 100*a/800),
                    FONT_HERSHEY_SIMPLEX, 0.5*a/800, colorBLUE, 2*a/800);
-                        
-            // Отображаем
-            imshow(windowName, displayFrame);
+            
+            imshow(windowName, displayFrame_cpu);
             
             auto endTimeDisp = chrono::steady_clock::now();
             auto durationDisp = chrono::duration_cast<chrono::microseconds>(endTimeDisp - startTimeDisp);
-            VideoStabilizer::processingTimeImshow = (VideoStabilizer::processingTimeImshow*199.0 + durationDisp.count() / 1000.0)/200.0;
+            processingTimeImshow = (processingTimeImshow*19.0 + durationDisp.count() / 1000.0)/20.0;
 
-            // Запись видео
             if (recordEnable && writer.isOpened()) {
-                writer.write(frameData.frame);
+                writer.write(displayFrame_cpu);
             }
             
-            // Расчет FPS отображения
             auto now = chrono::steady_clock::now();
             auto elapsed = chrono::duration_cast<chrono::milliseconds>(now - lastDisplayTime);
             if (elapsed.count() >= 1000) {
@@ -1049,52 +1069,49 @@ private:
                 lastDisplayTime = now;
             }
             
-            // Регулируем задержку для поддержания FPS
             auto frameElapsed = chrono::duration_cast<chrono::milliseconds>(now - lastFrameTime);
-            if (frameElapsed.count() < 5) { // ~60 FPS
+            if (frameElapsed.count() < 5) {
                 this_thread::sleep_for(chrono::milliseconds(5 - frameElapsed.count()));
             }
             lastFrameTime = now;
             
-            // Обработка клавиш
             int key = waitKey(1);
-            if (key == 27 || key == 'q') { // ESC или Q
+            if (key == 27 || key == 'q') {
                 cout << "Exit requested by user" << endl;
                 running = false;
                 break;
-            } else if (key == ' ') { // Пробел - пауза
+            } else if (key == ' ') {
                 cout << "Paused. Press any key to continue..." << endl;
                 waitKey(0);
-            } else if (key == 'f') { // A - сохранить кадр
+            } else if (key == 'f') {
                 string filename = format("frame_%06d.jpg", frameData.frameId);
-                imwrite(filename, frameData.frame);
+                imwrite(filename, displayFrame_cpu);
                 cout << "Frame saved: " << filename << endl;
-            } else if (key == 'd') { // D - переключить режим отладки
+            } else if (key == 'd') {
                 debugMode = !debugMode;
                 cout << "Debug mode: " << (debugMode ? "ON" : "OFF") << endl;
+            } else if (key == 'o') {
+                // Переключение OpenCL
+                bool current = cv::ocl::useOpenCL();
+                cv::ocl::setUseOpenCL(!current);
+                cout << "OpenCL " << (cv::ocl::useOpenCL() ? "enabled" : "disabled") << endl;
             } else if (key == 's' || key == 'S') {
-                if (VideoStabilizer::framePart < 0.95)
-                {
-                    VideoStabilizer::framePart *= 1.01;
-                    if (VideoStabilizer::framePart > 0.9)
-                        VideoStabilizer::framePart = 0.9;
-                    VideoStabilizer::roi.x = a * ((1.0 - VideoStabilizer::framePart) / 2.0);
-                    VideoStabilizer::roi.y = b * ((1.0 - VideoStabilizer::framePart) / 2.0);
-                    VideoStabilizer::roi.width = a * VideoStabilizer::framePart;
-                    VideoStabilizer::roi.height = b * VideoStabilizer::framePart;
+                if (framePart < 0.95) {
+                    framePart *= 1.01;
+                    if (framePart > 0.9) framePart = 0.9;
+                    roi.x = a * ((1.0 - framePart) / 2.0);
+                    roi.y = b * ((1.0 - framePart) / 2.0);
+                    roi.width = a * framePart;
+                    roi.height = b * framePart;
                 }
-            }
-            if (key == 'w' || key == 'W')
-            {
-                if (VideoStabilizer::framePart > 0.2)
-                {
-                    VideoStabilizer::framePart *= 0.99;
-                    if (VideoStabilizer::framePart < 0.05)
-                        VideoStabilizer::framePart = 0.05;
-                    VideoStabilizer::roi.x = a * ((1.0 - VideoStabilizer::framePart) / 2.0);
-                    VideoStabilizer::roi.y = b * ((1.0 - VideoStabilizer::framePart) / 2.0);
-                    VideoStabilizer::roi.width = a * VideoStabilizer::framePart;
-                    VideoStabilizer::roi.height = b * VideoStabilizer::framePart;
+            } else if (key == 'w' || key == 'W') {
+                if (framePart > 0.2) {
+                    framePart *= 0.99;
+                    if (framePart < 0.05) framePart = 0.05;
+                    roi.x = a * ((1.0 - framePart) / 2.0);
+                    roi.y = b * ((1.0 - framePart) / 2.0);
+                    roi.width = a * framePart;
+                    roi.height = b * framePart;
                 }
             }
         }
@@ -1108,43 +1125,41 @@ private:
     }
     
     // ========================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =========================
-    void loadImage(cv::Mat& image_color, int frame_id, std::string filepath)
-    {
+    void loadImage(UMat& image_color, int frame_id, std::string filepath) {
+        cv::ocl::setUseOpenCL(USE_OPENCL);
         char file[200];
         std::string filename;
         
-        // Сначала пробуем PNG
         sprintf(file, "image_0/%06d.png", frame_id);
         filename = filepath + std::string(file);
         
-        // Проверяем существование файла перед чтением
         std::ifstream file_check(filename.c_str());
-        if (file_check.good())
-        {
+        if (file_check.good()) {
             file_check.close();
-            image_color = cv::imread(filename, cv::IMREAD_COLOR);
+            Mat image_cpu = imread(filename, IMREAD_COLOR);
+            if (!image_cpu.empty()) {
+                image_cpu.copyTo(image_color);
+            }
         }
         
-        // Если PNG не найден, пробуем JPG
-        if (image_color.empty())
-        {
+        if (image_color.empty()) {
             sprintf(file, "image_0/%06d.jpg", frame_id);
             filename = filepath + std::string(file);
             
             std::ifstream jpg_check(filename.c_str());
-            if (jpg_check.good())
-            {
+            if (jpg_check.good()) {
                 jpg_check.close();
-                image_color = cv::imread(filename, cv::IMREAD_COLOR);
+                Mat image_cpu = imread(filename, IMREAD_COLOR);
+                if (!image_cpu.empty()) {
+                    image_cpu.copyTo(image_color);
+                }
             }
         }
     }
 
-    void removeFramePoints(vector<Point2f>& p0, double minDistance)
-    {
+    void removeFramePoints(vector<Point2f>& p0, double minDistance) {
         if (p0.empty()) return;
 
-        // Сортировка точек по оси Х
         std::sort(p0.begin(), p0.end(), [](const cv::Point2f& a, const cv::Point2f& b) {
             return a.x < b.x;
         });
@@ -1175,53 +1190,40 @@ private:
         }
     }
 
-    void iirAdaptive(TransformParam& transformsFirtsDerivative, TransformParam& transforms, TransformParam& transformSKO, Mat& stabMatrix, 
-        double& tauStab, Rect& roi, const int a, const int b, double& kSwitch)
-    {
-        if (abs(transformsFirtsDerivative.dx) < 4.0 * transformSKO.dx + a/8)
-        {
+    void iirAdaptive(TransformParam& transformsFirtsDerivative, TransformParam& transforms, TransformParam& transformSKO, UMat& stabMatrix, 
+        double& tauStab, Rect& roi, const int a, const int b, double& kSwitch) {
+        if (abs(transformsFirtsDerivative.dx) < 4.0 * transformSKO.dx + a/8) {
             transforms.dx = kSwitch * (transforms.dx * (tauStab - 1.0) / tauStab + kSwitch * transformsFirtsDerivative.dx);
         } 
 
-        if (abs(transformsFirtsDerivative.dy) < 4.0 * transformSKO.dy + b/8)
-        {
+        if (abs(transformsFirtsDerivative.dy) < 4.0 * transformSKO.dy + b/8) {
             transforms.dy = kSwitch * (transforms.dy * (tauStab - 1.0) / tauStab + kSwitch * transformsFirtsDerivative.dy);
         }
 
-        if (abs(transformsFirtsDerivative.da) < 4.0 * transformSKO.da + 0.1)
-        {
+        if (abs(transformsFirtsDerivative.da) < 4.0 * transformSKO.da + 0.1) {
             transforms.da = kSwitch * (transforms.da * (tauStab - 1.0) / tauStab + kSwitch * transformsFirtsDerivative.da);
         }
 
-        if (transforms.da > CV_PI)
-            transforms.da -= CV_PI;
-        if (transforms.da < -CV_PI)
-            transforms.da += CV_PI;
+        if (transforms.da > CV_PI) transforms.da -= CV_PI;
+        if (transforms.da < -CV_PI) transforms.da += CV_PI;
 
-        if (tauStab < 30.0)
-            tauStab *= 1.2;
+        if (tauStab < 30.0) tauStab *= 1.2;
 
         if (tauStab < 50.0 && !(abs(transforms.dx) > a / 2 || abs(transforms.dy) > b / 2))
             tauStab *= 1.1;
 
-        if (tauStab < 100.0 && !(abs(transforms.dx) > a / 3 || abs(transforms.dy) > b / 3))
-        {
+        if (tauStab < 100.0 && !(abs(transforms.dx) > a / 3 || abs(transforms.dy) > b / 3)) {
             tauStab *= 1.1;
-            if (tauStab > 100.0)
-                tauStab = 100.0;
+            if (tauStab > 100.0) tauStab = 100.0;
         }
 
-        // Проверка границ ROI
-        if (roi.x + (int)transforms.dx < 0)
-        {
+        if (roi.x + (int)transforms.dx < 0) {
             transforms.dx = double(1 - roi.x);
             if (tauStab > 50) {
                 tauStab *= 0.9;
                 kSwitch *= 0.95;
             }
-        }
-        else if (roi.x + roi.width + (int)transforms.dx >= a)
-        {
+        } else if (roi.x + roi.width + (int)transforms.dx >= a) {
             transforms.dx = (double)(a - roi.x - roi.width);
             if (tauStab > 50) {
                 tauStab *= 0.9;
@@ -1229,16 +1231,13 @@ private:
             }
         }
 
-        if (roi.y + (int)transforms.dy < 0)
-        {
+        if (roi.y + (int)transforms.dy < 0) {
             transforms.dy = (double)(1 - roi.y);
             if (tauStab > 10) {
                 tauStab *= 0.9;
                 kSwitch *= 0.95;
             }
-        }
-        else if (roi.y + roi.height + (int)transforms.dy >= b)
-        {
+        } else if (roi.y + roi.height + (int)transforms.dy >= b) {
             transforms.dy = (double)(b - roi.y - roi.height);
             if (tauStab > 50) {
                 tauStab *= 0.9;
@@ -1246,8 +1245,7 @@ private:
             }
         }
 
-        if (kSwitch < 1.0)
-            tauStab *= (4.0 + kSwitch) / 5.0;
+        if (kSwitch < 1.0) tauStab *= (4.0 + kSwitch) / 5.0;
 
         transformSKO.dx = (1.0 - 0.1) * transformSKO.dx + 0.1 * abs(transformsFirtsDerivative.dx);
         transformSKO.dy = (1.0 - 0.1) * transformSKO.dy + 0.1 * abs(transformsFirtsDerivative.dy);
@@ -1261,20 +1259,26 @@ private:
 
 int main() {
     cout << "========================================" << endl;
-    cout << "     MULTI-THREADED VIDEO STABILIZER    " << endl;
+    cout << " MULTI-THREADED VIDEO STABILIZER OPENCL " << endl;
     cout << "========================================" << endl;
     
-    // Отображаем информацию о процессоре
+    // Инициализация OpenCL
+    bool openclAvailable = initOpenCL();
+    if (openclAvailable) {
+        cout << "OpenCL successfully initialized" << endl;
+    } else {
+        cout << "Running in CPU-only mode" << endl;
+    }
+    
     int cores = getAvailableCores();
     cout << "CPU cores available: " << cores << endl;
-    cout << "CPU architecture: Amlogic A311D (4x Cortex-A73 + 2x Cortex-A53)" << endl;
     
-    // Запрашиваем у пользователя режим работы
     cout << "Выберите режим работы:" << endl;
     cout << "1. Использовать камеру (по умолчанию)" << endl;
-    cout << "3. Читать кадры из папки PXL_3 (по умолчанию)"<< endl;
-    cout << "4. Читать кадры из папки PXL_4K (по умолчанию)"<< endl;
-    cout << "Введите 1, 3 или 4: ";
+    cout << "3. Читать кадры из папки PXL_3" << endl;
+    cout << "4. Читать кадры из папки PXL_4K" << endl;
+    cout << "5. Читать кадры из папки PXL_4K (x86 PC)" << endl;
+    cout << "Введите 1, 3, 4 или 5: ";
     
     int choice;
     cin >> choice;
@@ -1282,17 +1286,16 @@ int main() {
     bool useCamera = true;
     string imageFolderPath;
     
-    if (choice > 3) {
+    if (choice == 4) {
         useCamera = false;
         
         cout << endl << "Введите путь к папке с кадрами:" << endl;
         cout << "Пример: /home/pi/opencv_projects/videos/PXL_4K/" << endl;
         cout << "Путь: ";
         
-        cin.ignore(); // Очищаем буфер ввода
+        cin.ignore();
         getline(cin, imageFolderPath);
         
-        // Удаляем возможные кавычки в начале и конце
         if (!imageFolderPath.empty()) {
             if (imageFolderPath.front() == '"' || imageFolderPath.front() == '\'') {
                 imageFolderPath.erase(0, 1);
@@ -1302,18 +1305,46 @@ int main() {
             }
         }
         
-        // Проверяем, есть ли слеш в конце пути
         if (!imageFolderPath.empty() && imageFolderPath.back() != '/') {
             imageFolderPath += '/';
         }
         
         cout << "Путь к кадрам: " << imageFolderPath << endl;
         
-        // Проверяем существование директории
         struct stat info;
         if (stat(imageFolderPath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
             cerr << "Ошибка: директория не существует или недоступна!\n Использование директории по умолчанию." << endl;
             imageFolderPath = "/home/pi/opencv_projects/videos/PXL_4K/";
+        }
+    } else if (choice > 4) {
+        useCamera = false;
+        
+        cout << endl << "Введите путь к папке с кадрами:" << endl;
+        cout << "Пример: /home/selbizo/CV/dataset/videos/PXL_4K/" << endl;
+        cout << "Путь: ";
+        
+        cin.ignore();
+        getline(cin, imageFolderPath);
+        
+        if (!imageFolderPath.empty()) {
+            if (imageFolderPath.front() == '"' || imageFolderPath.front() == '\'') {
+                imageFolderPath.erase(0, 1);
+            }
+            if (imageFolderPath.back() == '"' || imageFolderPath.back() == '\'') {
+                imageFolderPath.pop_back();
+            }
+        }
+        
+        if (!imageFolderPath.empty() && imageFolderPath.back() != '/') {
+            imageFolderPath += '/';
+        }
+        
+        cout << "Путь к кадрам: " << imageFolderPath << endl;
+        
+        struct stat info;
+        if (stat(imageFolderPath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
+            cerr << "Ошибка: директория не существует или недоступна!\n Использование директории по умолчанию." << endl;
+            imageFolderPath = "/home/selbizo/CV/dataset/videos/PXL_4K/";
         }
     } else if (choice == 3 || choice == 2) {
         useCamera = false;
@@ -1322,10 +1353,9 @@ int main() {
         cout << "Пример: /home/pi/opencv_projects/videos/PXL_3/" << endl;
         cout << "Путь: ";
         
-        cin.ignore(); // Очищаем буфер ввода
+        cin.ignore();
         getline(cin, imageFolderPath);
         
-        // Удаляем возможные кавычки в начале и конце
         if (!imageFolderPath.empty()) {
             if (imageFolderPath.front() == '"' || imageFolderPath.front() == '\'') {
                 imageFolderPath.erase(0, 1);
@@ -1335,14 +1365,12 @@ int main() {
             }
         }
         
-        // Проверяем, есть ли слеш в конце пути
         if (!imageFolderPath.empty() && imageFolderPath.back() != '/') {
             imageFolderPath += '/';
         }
         
         cout << "Путь к кадрам: " << imageFolderPath << endl;
         
-        // Проверяем существование директории
         struct stat info;
         if (stat(imageFolderPath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
             cerr << "Ошибка: директория не существует или недоступна!\n Использование директории по умолчанию." << endl;
@@ -1352,31 +1380,25 @@ int main() {
         cout << "Используется режим камеры" << endl;
     }
     
-    // Создание стабилизатора
     VideoStabilizer stabilizer;
-    
-    // Запуск системы
     stabilizer.start(useCamera, imageFolderPath);
     
-    // Ожидание завершения
     cout << endl << "Управление:" << endl;
     cout << "  ESC или Q - выход" << endl;
     cout << "  Пробел - пауза" << endl;
     cout << "  F - сохранить текущий кадр" << endl;
     cout << "  D - переключить режим отладки" << endl;
+    cout << "  O - переключить OpenCL" << endl;
     cout << "  S/W - увеличить/уменьшить область кадра" << endl;
     
-    // Основной цикл ожидания
     try {
-        while (stabilizer.running)
-        {
-            this_thread::sleep_for(chrono::seconds(10));
+        while (stabilizer.running) {
+            this_thread::sleep_for(chrono::seconds(20));
         }
     } catch (...) {
         cout << "Main thread interrupted" << endl;
     }
     
-    // Остановка системы
     stabilizer.stop();
     cout << "Program finished successfully" << endl;
     return 0;

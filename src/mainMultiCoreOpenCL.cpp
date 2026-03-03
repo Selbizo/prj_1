@@ -57,7 +57,9 @@ const int maxLevelConfig = 5;
 const int itersConfig = 10;
 
 // Источник видео (измените на свой)
-const string videoSource = "http://192.168.0.102:4747/video";
+//const string videoSource = "http://192.168.0.102:4747/video";
+const string videoSource = "/home/pi/opencv_projects/videos/PXL_3.mp4";
+
 
 // Убрали фиксированный путь к файлам
 string filepath = "";
@@ -285,10 +287,10 @@ public:
         // Используем большие ядра Cortex-A73 для тяжелых задач
         if (totalCores >= 6) {
             // A311D имеет 4 больших ядра (2-5) и 2 маленьких (0-1)
-            captureCore = 0;           // Ядро 1: захват
-            detectionCore = 0;         // Ядро 0: детектирование и трекинг (самая легкая задача)
-            stabilizationCore = 0;     // Ядро 5: стабилизация (самая сложная задача)
-            displayCore = 0;           // Ядро 4: отображение
+            captureCore = -1;           // Ядро 1: захват
+            detectionCore = -1;         // Ядро 0: детектирование и трекинг (самая легкая задача)
+            stabilizationCore = -1;     // Ядро 5: стабилизация (самая сложная задача)
+            displayCore = -1;           // Ядро 4: отображение
         } else if (totalCores >= 4) {
             // Если только 4 ядра, распределяем равномерно
             captureCore = 0;
@@ -429,24 +431,8 @@ private:
         // Для режима камеры оставляем VideoCapture
         VideoCapture cap;
         if (useCamera) {
-            int cameraIndex = 0;
-            if (videoSource == "0") {
-                cameraIndex = 0;
-            } else {
-                try {
-                    cameraIndex = stoi(videoSource);
-                } catch (...) {
-                    cameraIndex = 0;
-                }
-            }
-            
-            cap.open(cameraIndex);
-            if (!cap.isOpened()) {
-                cerr << "Cannot open camera " << cameraIndex << endl;
-                running = false;
-                return;
-            }
-            cout << "Opened camera " << cameraIndex << " as video source" << endl;
+
+            cap.open(videoSource);
             
             // Получаем параметры видео с камеры
             frameSize = Size(
@@ -1313,7 +1299,7 @@ int main() {
         useCamera = false;
         
         cout << endl << "Введите путь к папке с кадрами:" << endl;
-        cout << "Пример: /home/bananapi/Opencv_projects/dataset/videos/PXL_4K/" << endl;
+        cout << "Пример: /home/pi/opencv_projects/videos/PXL_4K/" << endl;
         cout << "Путь: ";
         
         cin.ignore(); // Очищаем буфер ввода
@@ -1340,7 +1326,7 @@ int main() {
         struct stat info;
         if (stat(imageFolderPath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
             cerr << "Ошибка: директория не существует или недоступна!\n Использование директории по умолчанию." << endl;
-            imageFolderPath = "/home/bananapi/Opencv_projects/dataset/videos/PXL_4K/";
+            imageFolderPath = "/home/pi/opencv_projects/videos/PXL_4K/";
         }
     } else 
     if (choice > 4) {
@@ -1382,7 +1368,7 @@ int main() {
         useCamera = false;
         
         cout << endl << "Введите путь к папке с кадрами:" << endl;
-        cout << "Пример: /home/bananapi/Opencv_projects/dataset/videos/PXL_3/" << endl;
+        cout << "Пример: /home/pi/opencv_projects/videos/PXL_3/" << endl;
         cout << "Путь: ";
         
         cin.ignore(); // Очищаем буфер ввода
@@ -1409,7 +1395,7 @@ int main() {
         struct stat info;
         if (stat(imageFolderPath.c_str(), &info) != 0 || !(info.st_mode & S_IFDIR)) {
             cerr << "Ошибка: директория не существует или недоступна!\n Использование директории по умолчанию." << endl;
-            imageFolderPath = "/home/bananapi/Opencv_projects/dataset/videos/PXL_3/";
+            imageFolderPath = "/home/pi/opencv_projects/videos/PXL_3/";
         }
     } else 
     {
