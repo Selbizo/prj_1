@@ -39,12 +39,12 @@ const Scalar colorBLACK(0, 0, 0);
 
 // Настройки системы
 const bool recordEnable = false;
-const int compressionConfig = 4; // Сжатие для обработки
+const int compressionConfig = 2; // Сжатие для обработки
 
 // Настройки детектора
 int maxCornersConfig = 200;
 double qualityLevelConfig = 0.005;
-const double minDistanceConfig = 3.0;
+const double minDistanceConfig = 7.0;
 int blockSizeConfig = 9;
 const bool useHarrisDetectorConfig = true;
 double harrisKConfig = 0.005;
@@ -56,6 +56,11 @@ const int itersConfig = 10;
 
 // Источник видео
 string videoSource = "/home/pi/opencv_projects/videos/PXL_1.mp4";
+
+// ========================= НОВЫЕ КОНСТАНТЫ ДЛЯ УПРАВЛЕНИЯ ПАМЯТЬЮ =========================
+const int MAX_QUEUE_SIZE = 5;           // Максимальный размер очередей
+const int MAX_FRAME_BUFFER_SIZE = 7;    // Максимальный размер буфера кадров для отображения
+const int SKIP_FRAMES_THRESHOLD = 1;    // Сколько кадров пропускать при переполнении
 
 // ========================= СТРУКТУРЫ ДАННЫХ =========================
 
@@ -117,30 +122,40 @@ struct FrameData {
     UMat stabMatrix;
     int frameId;
     double timestamp;
+    bool shouldSkip;        // Флаг для пропуска кадра при переполнении
     
-    FrameData() : frameId(0), timestamp(0) {}
+    FrameData() : frameId(0), timestamp(0), shouldSkip(false) {}
 };
 
+// ========================= ИСПРАВЛЕННАЯ ОЧЕРЕДЬ С ОГРАНИЧЕНИЕМ =========================
 class ThreadSafeQueue {
 private:
-    queue<FrameData> queue_;
+    deque<FrameData> queue_;
     mutable mutex mutex_;
     condition_variable cond_;
+    const size_t maxSize_;
     
 public:
-    void push(FrameData data) {
-        {
-            lock_guard<mutex> lock(mutex_);
-            queue_.push(move(data));
+    ThreadSafeQueue(size_t maxSize = MAX_QUEUE_SIZE) : maxSize_(maxSize) {}
+    
+    bool push(FrameData data) {
+        lock_guard<mutex> lock(mutex_);
+        
+        // Если очередь переполнена, пропускаем кадр
+        if (queue_.size() >= maxSize_) {
+            return false; // Кадр не добавлен
         }
+        
+        queue_.push_back(move(data));
         cond_.notify_one();
+        return true;
     }
     
     bool try_pop(FrameData& data) {
         lock_guard<mutex> lock(mutex_);
         if (queue_.empty()) return false;
         data = move(queue_.front());
-        queue_.pop();
+        queue_.pop_front();
         return true;
     }
     
@@ -148,7 +163,7 @@ public:
         unique_lock<mutex> lock(mutex_);
         cond_.wait(lock, [this] { return !queue_.empty(); });
         data = move(queue_.front());
-        queue_.pop();
+        queue_.pop_front();
         return true;
     }
     
@@ -160,6 +175,11 @@ public:
     size_t size() const {
         lock_guard<mutex> lock(mutex_);
         return queue_.size();
+    }
+    
+    void clear() {
+        lock_guard<mutex> lock(mutex_);
+        queue_.clear();
     }
 };
 
@@ -202,9 +222,9 @@ int getAvailableCores() {
 
 class VideoStabilizer {
 private:
-    // Очереди конвейерной обработки
-    ThreadSafeQueue rawFramesQueue;          // Захват -> Детекция/Трекинг
-    ThreadSafeQueue processedFramesQueue;    // Детекция/Трекинг -> Стабилизация
+    // Очереди конвейерной обработки с ограниченным размером
+    ThreadSafeQueue rawFramesQueue{MAX_QUEUE_SIZE};          // Захват -> Детекция/Трекинг
+    ThreadSafeQueue processedFramesQueue{MAX_QUEUE_SIZE};    // Детекция/Трекинг -> Стабилизация
     
     // Буфер для сохранения порядка кадров при отображении
     unordered_map<int, FrameData> frameBuffer;
@@ -234,12 +254,13 @@ private:
     atomic<int> fps;
     atomic<int> trackedPoints;
     atomic<int> framesProcessed;
+    atomic<int> framesSkipped;  // Счетчик пропущенных кадров
     atomic<bool> debugMode;
     
     // Оптимизация производительности
     atomic<int> processingLag{0};
-    const int MAX_PROCESSING_LAG = 6;
-    const int MAX_BUFFER_SIZE = 5;
+    const int MAX_PROCESSING_LAG = 3;  // Уменьшил с 6 до 3
+    const int MAX_BUFFER_SIZE = MAX_FRAME_BUFFER_SIZE;
     
     double processingTimeCapture;
     double processingTimeDetectionTracking;
@@ -264,6 +285,7 @@ public:
           framePart(0.7),
           trackedPoints(0),
           framesProcessed(0),
+          framesSkipped(0),
           debugMode(false),
           captureCore(-1),
           detectionCore(-1),
@@ -295,6 +317,8 @@ public:
         );
 
         cout << "Detector created with maxCorners=" << maxCornersConfig << endl;
+        cout << "Memory limits: Queue size=" << MAX_QUEUE_SIZE 
+             << ", Frame buffer=" << MAX_FRAME_BUFFER_SIZE << endl;
     }
     
     ~VideoStabilizer() {
@@ -324,8 +348,13 @@ public:
     void stop() {
         running = false;
         
+        // Очищаем очереди при остановке
+        rawFramesQueue.clear();
+        processedFramesQueue.clear();
+        
         {
             lock_guard<mutex> lock(bufferMutex);
+            frameBuffer.clear();
             frameReadyCV.notify_all();
         }
         
@@ -334,7 +363,8 @@ public:
         }
         workers.clear();
         pthreads.clear();
-        cout << "Video stabilizer stopped. Total frames processed: " << framesProcessed << endl;
+        cout << "Video stabilizer stopped. Total frames processed: " << framesProcessed 
+             << ", Skipped: " << framesSkipped << endl;
     }
     
 private:
@@ -409,15 +439,34 @@ private:
         int frameId = 0;
         auto lastFpsTime = chrono::steady_clock::now();
         int frameCount = 0;
+        int consecutiveSkips = 0;
         
         while (running) {
             auto startTimeCap = chrono::steady_clock::now();
             int totalLag = rawFramesQueue.size() + processedFramesQueue.size();
             
+            // Если лаг слишком большой, пропускаем кадры
             if (totalLag > MAX_PROCESSING_LAG) {
-                this_thread::sleep_for(chrono::milliseconds(1));
+                consecutiveSkips++;
+                
+                // Пропускаем несколько кадров подряд при сильной перегрузке
+                if (consecutiveSkips > SKIP_FRAMES_THRESHOLD) {
+                    //cout << "High load, skipping frames..." << endl;
+                    framesSkipped += SKIP_FRAMES_THRESHOLD;
+                    
+                    if (useCamera) {
+                        // Для камеры просто читаем и отбрасываем кадр
+                        Mat dummy;
+                        cap.read(dummy);
+                    }
+                    consecutiveSkips = 0;
+                }
+                
+                this_thread::sleep_for(chrono::milliseconds(2));
                 continue;
             }
+            
+            consecutiveSkips = 0;
             
             FrameData frameData;
             frameData.frameId = frameId++;
@@ -426,10 +475,11 @@ private:
                 // Режим камеры - читаем в CPU Mat
                 bool frameRead = cap.read(frameData.frameCPU);
                 if (!frameRead || frameData.frameCPU.empty()) {
-                    cerr << "Failed to read frame from camera" << endl;
-                    //continue;
+                    cerr << "Failed to read frame from camera, reopening..." << endl;
                     cap.release();
                     cap.open(videoSource);
+                    this_thread::sleep_for(chrono::milliseconds(10));
+                    continue;
                 }
             } else {
                 // Режим изображений
@@ -459,8 +509,13 @@ private:
             cvtColor(compressed, gray, COLOR_BGR2GRAY);
             gray.copyTo(frameData.grayCPU); // Сохраняем на CPU
             
-            // Отправляем в очередь для детекции/трекинга
-            rawFramesQueue.push(move(frameData));
+            // Пытаемся отправить в очередь для детекции/трекинга
+            if (!rawFramesQueue.push(move(frameData))) {
+                // Если очередь переполнена, пропускаем кадр
+                framesSkipped++;
+                // Освобождаем память кадра, который не удалось добавить
+                // (frameData будет автоматически уничтожен при выходе из области видимости)
+            }
             
             frameCount++;
             auto now = chrono::steady_clock::now();
@@ -480,7 +535,7 @@ private:
         cout << "Capture thread stopped" << endl;
     }
     
-    // ========================= ПОТОК ДЕТЕКТИРОВАНИЯ И ОТСЛЕЖИВАНИЯ (ТОЛЬКО CPU) =========================
+// ========================= ПОТОК ДЕТЕКТИРОВАНИЯ И ОТСЛЕЖИВАНИЯ (ТОЛЬКО CPU) =========================
     void detectionAndTrackingThread() {
         cout << "Detection and Tracking thread started (CPU only)" << endl;
         
@@ -491,6 +546,7 @@ private:
         Size winSize(winSizeConfig, winSizeConfig);
         int consecutiveFailures = 0;
         const int MAX_CONSECUTIVE_FAILURES = 10;
+        int framesProcessedInThread = 0;
         
         while (running) {
             FrameData frameData;
@@ -500,9 +556,10 @@ private:
             }
             
             auto startTimeDetTrack = chrono::steady_clock::now();
+            framesProcessedInThread++;
             
             // Часть 1: Детектирование точек (если нужно)
-            if (firstFrameForTracking || prevPoints.empty() || trackedPoints.load() < maxCornersConfig / 5) {
+            if (firstFrameForTracking || prevPoints.empty() || trackedPoints.load() < 20) {
                 // Детектирование точек на CPU
                 Mat maskCPU = Mat::zeros(frameData.grayCPU.size(), CV_8U);
                 int marginX = frameData.grayCPU.cols / 8;
@@ -532,6 +589,102 @@ private:
                 
                 removeFramePoints(frameData.points, minDistanceConfig * 0.8);
                 
+                // ===== НОВЫЙ КОД: Добавление точек для равномерного распределения =====
+                if (!firstFrameForTracking && frameData.points.size() < maxCornersConfig * 0.7) {
+                    // Разбиваем на сетку 4x4 для поиска разреженных областей
+                    int gridSize = 7;
+                    int cellHeight = frameData.grayCPU.rows / gridSize;
+                    int cellWidth = frameData.grayCPU.cols / gridSize;
+                    //cout << "adding new points" << endl;
+                    vector<Rect> sparseCells;
+                    vector<int> pointsPerCell(gridSize * gridSize, 0);
+                    
+                    // Считаем точки в каждой ячейке
+                    for (const auto& pt : frameData.points) {
+                        int row = min(static_cast<int>(pt.y / cellHeight), gridSize - 1);
+                        int col = min(static_cast<int>(pt.x / cellWidth), gridSize - 1);
+                        if (row >= 0 && col >= 0) {
+                            pointsPerCell[row * gridSize + col]++;
+                        }
+                    }
+                    
+                    // Находим ячейки с минимальным количеством точек
+                    int minPoints = *min_element(pointsPerCell.begin(), pointsPerCell.end());
+                    int targetPerCell = max(1, maxCornersConfig / (gridSize * gridSize));
+                    
+                    for (int i = 0; i < gridSize * gridSize; i++) {
+                        if (pointsPerCell[i] <= minPoints + 1 || pointsPerCell[i] < targetPerCell / 2) {
+                            int row = i / gridSize;
+                            int col = i % gridSize;
+                            sparseCells.push_back(Rect(col * cellWidth, row * cellHeight, 
+                                                     cellWidth, cellHeight));
+                        }
+                    }
+                    
+                    // Создаем маску для новых точек
+                    //Mat newPointsMask = Mat::zeros(frameData.grayCPU.size(), CV_8U);
+                    
+                    // Добавляем существующие точки в маску (области, куда нельзя ставить новые точки)
+                    Mat existingMask = Mat::zeros(frameData.grayCPU.size(), CV_8U);
+                    for (const auto& pt : frameData.points) {
+                        circle(existingMask, pt, static_cast<int>(minDistanceConfig), Scalar(255), FILLED);
+                    }
+                    
+                    // Детектируем дополнительные точки в разреженных ячейках
+                    vector<Point2f> additionalPoints;
+                    for (const auto& cell : sparseCells) {
+                        if (frameData.points.size() + additionalPoints.size() >= maxCornersConfig) {
+                            break;
+                        }
+                        
+                        // Маска для текущей ячейки
+                        Mat cellMask = Mat::zeros(frameData.grayCPU.size(), CV_8U);
+                        rectangle(cellMask, cell, Scalar(255), FILLED);
+                        
+                        // Исключаем области с существующими точками
+                        Mat combinedMask;
+                        bitwise_and(cellMask, ~existingMask, combinedMask);
+                        
+                        // Детектируем точки
+                        vector<KeyPoint> cellKeypoints;
+                        Ptr<GFTTDetector> cellDetector = GFTTDetector::create(
+                            maxCornersConfig / 4, qualityLevelConfig * 0.3, minDistanceConfig*0.3, 3, false, harrisKConfig
+                        );
+                        
+                        try {
+                            cellDetector->detect(frameData.grayCPU, cellKeypoints, combinedMask);
+                        } catch (const exception& e) {
+                            continue;
+                        }
+                        
+                        for (const auto& kp : cellKeypoints) {
+                            if (frameData.points.size() + additionalPoints.size() >= maxCornersConfig) {
+                                break;
+                            }
+                            
+                            // Проверяем расстояние до существующих точек
+                            bool tooClose = false;
+                            for (const auto& pt : frameData.points) {
+                                if (norm(kp.pt - pt) < minDistanceConfig) {
+                                    tooClose = true;
+                                    break;
+                                }
+                            }
+                            
+                            if (!tooClose) {
+                                additionalPoints.push_back(kp.pt);
+                                circle(existingMask, kp.pt, static_cast<int>(minDistanceConfig), Scalar(255), FILLED);
+                            }
+                        }
+                    }
+                    
+                    // Добавляем новые точки
+                    if (!additionalPoints.empty()) {
+                        frameData.points.insert(frameData.points.end(), additionalPoints.begin(), additionalPoints.end());
+                    }
+                }
+                // ===== КОНЕЦ НОВОГО КОДА =====
+                
                 if (firstFrameForTracking) {
                     // Первый кадр - сохраняем точки на CPU
                     frameData.grayCPU.copyTo(prevGrayCPU);
@@ -539,6 +692,11 @@ private:
                     firstFrameForTracking = false;
                     trackedPoints.store(static_cast<int>(prevPoints.size()));
                     frameData.transformFirstDerivative = TransformParam(0, 0, 0);
+                    
+                    // Проверяем размер очереди перед отправкой
+                    while (processedFramesQueue.size() >= MAX_QUEUE_SIZE && running) {
+                        this_thread::sleep_for(chrono::milliseconds(1));
+                    }
                     
                     processedFramesQueue.push(move(frameData));
                     
@@ -569,6 +727,10 @@ private:
                     frameData.points.clear();
                     prevPoints.clear();
                     trackedPoints.store(0);
+                    
+                    while (processedFramesQueue.size() >= MAX_QUEUE_SIZE && running) {
+                        this_thread::sleep_for(chrono::milliseconds(1));
+                    }
                     processedFramesQueue.push(move(frameData));
                     continue;
                 }
@@ -641,10 +803,15 @@ private:
             auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - startTimeDetTrack);
             processingTimeDetectionTracking = (processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
             
+            // Ждем, если очередь переполнена
+            while (processedFramesQueue.size() >= MAX_QUEUE_SIZE && running) {
+                this_thread::sleep_for(chrono::milliseconds(5));
+            }
+            
             processedFramesQueue.push(move(frameData));
         }
         
-        cout << "Detection and Tracking thread stopped" << endl;
+        cout << "Detection and Tracking thread stopped. Processed " << framesProcessedInThread << " frames." << endl;
     }
     
     // ========================= ПОТОК СТАБИЛИЗАЦИИ (ТОЛЬКО ЗДЕСЬ ИСПОЛЬЗУЕТСЯ GPU) =========================
@@ -677,6 +844,7 @@ private:
                     
                     kSwitch = 1.0;
                     framesProcessed++;
+                    framesStabilized++;
                     
                     // Стабилизация (вычисление матрицы трансформации на CPU)
                     iirAdaptive(frameData.transformFirstDerivative, oldTransform, 
@@ -707,8 +875,6 @@ private:
                     croppedFrame.copyTo(frameData.frameCPU);
                     // ====================================
                     
-                    framesStabilized++;
-                    
                 } catch (const exception& e) {
                     cerr << "Error in stabilization: " << e.what() << endl;
                 }
@@ -716,13 +882,22 @@ private:
             
             {
                 lock_guard<mutex> lock(bufferMutex);
+                
+                // Ограничиваем размер буфера
+                if (frameBuffer.size() >= MAX_FRAME_BUFFER_SIZE) {
+                    // Находим самый старый кадр и заменяем его
+                    int oldestFrameId = frameBuffer.begin()->first;
+                    frameBuffer.erase(oldestFrameId);
+                }
+                
                 frameBuffer[frameData.frameId] = move(frameData);
                 frameReadyCV.notify_one();
                 
-                if (frameBuffer.size() > MAX_BUFFER_SIZE * 2) {
+                // Дополнительная очистка старых кадров
+                if (frameBuffer.size() > MAX_FRAME_BUFFER_SIZE) {
                     vector<int> toRemove;
                     for (auto& pair : frameBuffer) {
-                        if (pair.first < nextDisplayFrameId - 5) {
+                        if (pair.first < nextDisplayFrameId - MAX_FRAME_BUFFER_SIZE) {
                             toRemove.push_back(pair.first);
                         }
                     }
@@ -735,6 +910,9 @@ private:
             auto endTimeStab = chrono::steady_clock::now();
             auto durationStab = chrono::duration_cast<chrono::microseconds>(endTimeStab - startTimeStab);
             processingTimeStabilization = (processingTimeStabilization * 19.0 + durationStab.count() / 1000.0) / 20.0;
+            
+            // Небольшая задержка для снижения нагрузки на GPU
+            //this_thread::sleep_for(chrono::milliseconds(1));
         }
         
         cout << "Stabilization thread stopped. Stabilized " << framesStabilized << " frames total." << endl;
@@ -777,6 +955,7 @@ private:
                     nextDisplayFrameId++;
                     gotFrame = true;
                 } else {
+                    // Если нет нужного кадра, пробуем найти ближайший
                     if (!frameBuffer.empty()) {
                         int nextAvailable = -1;
                         for (auto& pair : frameBuffer) {
@@ -792,6 +971,10 @@ private:
                             frameBuffer.erase(nextAvailable);
                             nextDisplayFrameId = nextAvailable + 1;
                             gotFrame = true;
+                        } else if (!frameBuffer.empty()) {
+                            // Если разрыв слишком большой, пропускаем кадры
+                            nextDisplayFrameId = frameBuffer.begin()->first;
+                            continue;
                         }
                     }
                     
@@ -813,15 +996,16 @@ private:
             Mat displayFrame;
             resize(frameData.frameCPU, displayFrame, Size(a, b), INTER_AREA);
             
-            string infoText = format("FPS: %d | Process: %2.1f ms | tauStab: %2.1f | framePart: %1.2f",
+            string infoText = format("FPS: %d | Proc: %2.1f ms | tau: %2.1f | part: %1.2f | Skip: %d",
                                     fps.load(),
                                     processingTimeCapture + processingTimeDetectionTracking + 
                                     processingTimeStabilization + processingTimeImshow, 
-                                    tauStab, framePart);
+                                    tauStab, framePart, framesSkipped.load());
 
-            string infoLatencies = format("Capture: %2.1f | Det+Track: %2.1f | Stabilization: %2.1f | Imshow: %2.1f",
+            string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Show: %2.1f | Q: %d / %d ",
                                     processingTimeCapture, processingTimeDetectionTracking, 
-                                    processingTimeStabilization, processingTimeImshow);
+                                    processingTimeStabilization, processingTimeImshow,
+                                    rawFramesQueue.size(), processedFramesQueue.size());
 
             putText(displayFrame, infoText, Point(10, 50 * a / 800),
                    FONT_HERSHEY_SIMPLEX, 0.5 * a / 800, colorBLUE, 2 * a / 800);
@@ -846,8 +1030,8 @@ private:
             }
             
             auto frameElapsed = chrono::duration_cast<chrono::milliseconds>(now - lastFrameTime);
-            if (frameElapsed.count() < 5) {
-                this_thread::sleep_for(chrono::milliseconds(5 - frameElapsed.count()));
+            if (frameElapsed.count() < 10) { // Ограничение до ~100 FPS
+                this_thread::sleep_for(chrono::milliseconds(33 - frameElapsed.count()));
             }
             lastFrameTime = now;
             
@@ -1062,8 +1246,16 @@ int main() {
             imageFolderPath = "/home/pi/opencv_projects/videos/PXL_4K/";
         }
         cout << "Путь к кадрам: " << imageFolderPath << endl;
-    } else {
-        cout << "Используется режим камеры" << endl;
+    } else if (choice == 0){
+        cout << "Используется режим http камеры по умолчанию:" << "http://192.168.0.103:4747/video?1000x1000" << endl;
+        cin.ignore();
+        getline(cin, videoSource);
+        if (videoSource.empty()) {
+            videoSource = "http://192.168.0.103:4747/video?1000x1000";
+        }
+    }
+    else {
+        cout << "Используется режим камеры по умолчанию:" << videoSource << endl;
         cin.ignore();
         getline(cin, videoSource);
         if (videoSource.empty()) {
