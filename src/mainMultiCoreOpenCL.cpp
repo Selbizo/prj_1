@@ -39,8 +39,8 @@ const Scalar colorBLACK(0, 0, 0);
 
 // Настройки системы
 const bool recordEnable = false;
-const int compressionConfig = 2; // Сжатие для обработки
-
+const int compressionConfig = 3; // Сжатие для обработки
+const float TAU_STAB_MAX = 120;
 // Настройки детектора
 int maxCornersConfig = 200;
 double qualityLevelConfig = 0.005;
@@ -60,7 +60,7 @@ string videoSource = "/home/pi/opencv_projects/videos/PXL_1.mp4";
 // ========================= НОВЫЕ КОНСТАНТЫ ДЛЯ УПРАВЛЕНИЯ ПАМЯТЬЮ =========================
 const int MAX_QUEUE_SIZE = 5;           // Максимальный размер очередей
 const int MAX_FRAME_BUFFER_SIZE = 7;    // Максимальный размер буфера кадров для отображения
-const int SKIP_FRAMES_THRESHOLD = 1;    // Сколько кадров пропускать при переполнении
+const int SKIP_FRAMES_THRESHOLD = 2;    // Сколько кадров пропускать при переполнении
 
 // ========================= СТРУКТУРЫ ДАННЫХ =========================
 
@@ -280,7 +280,7 @@ public:
 
     VideoStabilizer() 
         : running(false), 
-          tauStab(100.0), 
+          tauStab(TAU_STAB_MAX/4), 
           kSwitch(0.1), 
           framePart(0.7),
           trackedPoints(0),
@@ -535,284 +535,231 @@ private:
         cout << "Capture thread stopped" << endl;
     }
     
-// ========================= ПОТОК ДЕТЕКТИРОВАНИЯ И ОТСЛЕЖИВАНИЯ (ТОЛЬКО CPU) =========================
-    void detectionAndTrackingThread() {
-        cout << "Detection and Tracking thread started (CPU only)" << endl;
+    // ========================= ПОТОК ДЕТЕКТИРОВАНИЯ И ОТСЛЕЖИВАНИЯ (ТОЛЬКО CPU) =========================
+void detectionAndTrackingThread() {
+    cout << "Detection and Tracking thread started (CPU only)" << endl;
+    
+    // Отключаем OpenCL для этого потока - работаем только на CPU
+    cv::ocl::setUseOpenCL(false);
+    
+    TermCriteria termcrit(TermCriteria::COUNT | TermCriteria::EPS, 20, 0.03);
+    Size winSize(winSizeConfig, winSizeConfig);
+    int consecutiveFailures = 0;
+    const int MAX_CONSECUTIVE_FAILURES = 10;
+    int framesProcessedInThread = 0;
+    
+    // Счетчик для периодического обновления точек
+    int framesSinceLastRedetection = 0;
+    const int REDETECTION_INTERVAL = 15; // Рахрешаем обновление точек через REDETECTION_INTERVAL кадров
+    
+    while (running) {
+        FrameData frameData;
+        if (!rawFramesQueue.wait_and_pop(frameData)) {
+            if (!running) break;
+            continue;
+        }
         
-        // Отключаем OpenCL для этого потока - работаем только на CPU
-        cv::ocl::setUseOpenCL(false);
+        auto startTimeDetTrack = chrono::steady_clock::now();
+        framesProcessedInThread++;
         
-        TermCriteria termcrit(TermCriteria::COUNT | TermCriteria::EPS, 20, 0.03);
-        Size winSize(winSizeConfig, winSizeConfig);
-        int consecutiveFailures = 0;
-        const int MAX_CONSECUTIVE_FAILURES = 10;
-        int framesProcessedInThread = 0;
-        
-        while (running) {
-            FrameData frameData;
-            if (!rawFramesQueue.wait_and_pop(frameData)) {
-                if (!running) break;
+        // --- ЭТАП 1: ОТСЛЕЖИВАНИЕ ТОЧЕК (всегда делаем сначала) ---
+        if (!firstFrameForTracking && !prevPoints.empty() && !frameData.grayCPU.empty() && !prevGrayCPU.empty()) {
+            vector<Point2f> nextPoints;
+            vector<uchar> status;
+            vector<float> err;
+            
+            try {
+                calcOpticalFlowPyrLK(
+                    prevGrayCPU, frameData.grayCPU,
+                    prevPoints, nextPoints,
+                    status, err,
+                    winSize, maxLevelConfig,
+                    termcrit, 0, 0.001
+                );
+            } catch (const exception& e) {
+                cerr << "Error in optical flow: " << e.what() << endl;
+                frameData.grayCPU.copyTo(prevGrayCPU);
+                frameData.points.clear();
+                prevPoints.clear();
+                trackedPoints.store(0);
+                
+                while (processedFramesQueue.size() >= MAX_QUEUE_SIZE && running) {
+                    this_thread::sleep_for(chrono::milliseconds(1));
+                }
+                processedFramesQueue.push(move(frameData));
                 continue;
             }
             
-            auto startTimeDetTrack = chrono::steady_clock::now();
-            framesProcessedInThread++;
+            vector<Point2f> goodNew;
+            vector<Point2f> goodOld;
             
-            // Часть 1: Детектирование точек (если нужно)
-            if (firstFrameForTracking || prevPoints.empty() || trackedPoints.load() < 20) {
-                // Детектирование точек на CPU
-                Mat maskCPU = Mat::zeros(frameData.grayCPU.size(), CV_8U);
-                int marginX = frameData.grayCPU.cols / 8;
-                int marginY = frameData.grayCPU.rows / 8;
-                rectangle(maskCPU, 
-                        Rect(marginX, marginY, 
-                            frameData.grayCPU.cols - 2 * marginX, 
-                            frameData.grayCPU.rows - 2 * marginY),
-                        Scalar(255), FILLED);
-                
-                vector<KeyPoint> keypoints;
-                try {
-                    detector->detect(frameData.grayCPU, keypoints, maskCPU);
-                } catch (const exception& e) {
-                    cerr << "Error in detector: " << e.what() << endl;
-                    continue;
-                }
-                
-                for (const auto& kp : keypoints) {
-                    frameData.points.push_back(kp.pt);
-                }
-                
-                if (frameData.points.size() > maxCornersConfig * 4) {
-                    frameData.points.erase(frameData.points.begin(), 
-                                frameData.points.begin() + (frameData.points.size() - maxCornersConfig));
-                }
-                
-                removeFramePoints(frameData.points, minDistanceConfig * 0.8);
-                
-                // ===== НОВЫЙ КОД: Добавление точек для равномерного распределения =====
-                if (!firstFrameForTracking && frameData.points.size() < maxCornersConfig * 0.7) {
-                    // Разбиваем на сетку 4x4 для поиска разреженных областей
-                    int gridSize = 7;
-                    int cellHeight = frameData.grayCPU.rows / gridSize;
-                    int cellWidth = frameData.grayCPU.cols / gridSize;
-                    //cout << "adding new points" << endl;
-                    vector<Rect> sparseCells;
-                    vector<int> pointsPerCell(gridSize * gridSize, 0);
-                    
-                    // Считаем точки в каждой ячейке
-                    for (const auto& pt : frameData.points) {
-                        int row = min(static_cast<int>(pt.y / cellHeight), gridSize - 1);
-                        int col = min(static_cast<int>(pt.x / cellWidth), gridSize - 1);
-                        if (row >= 0 && col >= 0) {
-                            pointsPerCell[row * gridSize + col]++;
-                        }
-                    }
-                    
-                    // Находим ячейки с минимальным количеством точек
-                    int minPoints = *min_element(pointsPerCell.begin(), pointsPerCell.end());
-                    int targetPerCell = max(1, maxCornersConfig / (gridSize * gridSize));
-                    
-                    for (int i = 0; i < gridSize * gridSize; i++) {
-                        if (pointsPerCell[i] <= minPoints + 1 || pointsPerCell[i] < targetPerCell / 2) {
-                            int row = i / gridSize;
-                            int col = i % gridSize;
-                            sparseCells.push_back(Rect(col * cellWidth, row * cellHeight, 
-                                                     cellWidth, cellHeight));
-                        }
-                    }
-                    
-                    // Создаем маску для новых точек
-                    //Mat newPointsMask = Mat::zeros(frameData.grayCPU.size(), CV_8U);
-                    
-                    // Добавляем существующие точки в маску (области, куда нельзя ставить новые точки)
-                    Mat existingMask = Mat::zeros(frameData.grayCPU.size(), CV_8U);
-                    for (const auto& pt : frameData.points) {
-                        circle(existingMask, pt, static_cast<int>(minDistanceConfig), Scalar(255), FILLED);
-                    }
-                    
-                    // Детектируем дополнительные точки в разреженных ячейках
-                    vector<Point2f> additionalPoints;
-                    for (const auto& cell : sparseCells) {
-                        if (frameData.points.size() + additionalPoints.size() >= maxCornersConfig) {
-                            break;
-                        }
-                        
-                        // Маска для текущей ячейки
-                        Mat cellMask = Mat::zeros(frameData.grayCPU.size(), CV_8U);
-                        rectangle(cellMask, cell, Scalar(255), FILLED);
-                        
-                        // Исключаем области с существующими точками
-                        Mat combinedMask;
-                        bitwise_and(cellMask, ~existingMask, combinedMask);
-                        
-                        // Детектируем точки
-                        vector<KeyPoint> cellKeypoints;
-                        Ptr<GFTTDetector> cellDetector = GFTTDetector::create(
-                            maxCornersConfig / 4, qualityLevelConfig * 0.3, minDistanceConfig*0.3, 3, false, harrisKConfig
-                        );
-                        
-                        try {
-                            cellDetector->detect(frameData.grayCPU, cellKeypoints, combinedMask);
-                        } catch (const exception& e) {
-                            continue;
-                        }
-                        
-                        for (const auto& kp : cellKeypoints) {
-                            if (frameData.points.size() + additionalPoints.size() >= maxCornersConfig) {
-                                break;
-                            }
-                            
-                            // Проверяем расстояние до существующих точек
-                            bool tooClose = false;
-                            for (const auto& pt : frameData.points) {
-                                if (norm(kp.pt - pt) < minDistanceConfig) {
-                                    tooClose = true;
-                                    break;
-                                }
-                            }
-                            
-                            if (!tooClose) {
-                                additionalPoints.push_back(kp.pt);
-                                circle(existingMask, kp.pt, static_cast<int>(minDistanceConfig), Scalar(255), FILLED);
-                            }
-                        }
-                    }
-                    
-                    // Добавляем новые точки
-                    if (!additionalPoints.empty()) {
-                        frameData.points.insert(frameData.points.end(), additionalPoints.begin(), additionalPoints.end());
-                    }
-                }
-                // ===== КОНЕЦ НОВОГО КОДА =====
-                
-                if (firstFrameForTracking) {
-                    // Первый кадр - сохраняем точки на CPU
-                    frameData.grayCPU.copyTo(prevGrayCPU);
-                    prevPoints = frameData.points;
-                    firstFrameForTracking = false;
-                    trackedPoints.store(static_cast<int>(prevPoints.size()));
-                    frameData.transformFirstDerivative = TransformParam(0, 0, 0);
-                    
-                    // Проверяем размер очереди перед отправкой
-                    while (processedFramesQueue.size() >= MAX_QUEUE_SIZE && running) {
-                        this_thread::sleep_for(chrono::milliseconds(1));
-                    }
-                    
-                    processedFramesQueue.push(move(frameData));
-                    
-                    auto endTimeDetTrack = chrono::steady_clock::now();
-                    auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - startTimeDetTrack);
-                    processingTimeDetectionTracking = (processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
-                    continue;
+            int goodCount = 0;
+            for (size_t i = 0; i < status.size(); i++) {
+                if (status[i] && err[i] < 50.0) {
+                    goodNew.push_back(nextPoints[i]);
+                    goodOld.push_back(prevPoints[i]);
+                    goodCount++;
                 }
             }
             
-            // Часть 2: Отслеживание точек на CPU
-            if (!firstFrameForTracking && !prevPoints.empty() && !frameData.grayCPU.empty() && !prevGrayCPU.empty()) {
-                vector<Point2f> nextPoints;
-                vector<uchar> status;
-                vector<float> err;
-                
+            if (goodCount >= 6) {
+                Mat T;
                 try {
-                    calcOpticalFlowPyrLK(
-                        prevGrayCPU, frameData.grayCPU,
-                        prevPoints, nextPoints,
-                        status, err,
-                        winSize, maxLevelConfig,
-                        termcrit, 0, 0.001
-                    );
+                    T = estimateAffine2D(goodOld, goodNew, noArray(), RANSAC, 3.0);
                 } catch (const exception& e) {
-                    cerr << "Error in optical flow: " << e.what() << endl;
-                    frameData.grayCPU.copyTo(prevGrayCPU);
-                    frameData.points.clear();
-                    prevPoints.clear();
-                    trackedPoints.store(0);
-                    
-                    while (processedFramesQueue.size() >= MAX_QUEUE_SIZE && running) {
-                        this_thread::sleep_for(chrono::milliseconds(1));
-                    }
-                    processedFramesQueue.push(move(frameData));
-                    continue;
+                    cerr << "Error in estimateAffine2D: " << e.what() << endl;
+                    T = Mat();
                 }
                 
-                vector<Point2f> goodNew;
-                vector<Point2f> goodOld;
-                
-                int goodCount = 0;
-                for (size_t i = 0; i < status.size(); i++) {
-                    if (status[i] && err[i] < 50.0) {
-                        goodNew.push_back(nextPoints[i]);
-                        goodOld.push_back(prevPoints[i]);
-                        goodCount++;
-                    }
-                }
-                
-                if (goodCount >= 6) {
-                    Mat T;
-                    try {
-                        T = estimateAffine2D(goodOld, goodNew, noArray(), RANSAC, 3.0);
-                    } catch (const exception& e) {
-                        cerr << "Error in estimateAffine2D: " << e.what() << endl;
-                        T = Mat();
-                    }
+                if (!T.empty() && T.rows == 2 && T.cols == 3) {
+                    double dx = T.at<double>(0, 2) * compressionConfig;
+                    double dy = T.at<double>(1, 2) * compressionConfig;
+                    double da = atan2(T.at<double>(1, 0), T.at<double>(0, 0));
                     
-                    if (!T.empty() && T.rows == 2 && T.cols == 3) {
-                        double dx = T.at<double>(0, 2) * compressionConfig;
-                        double dy = T.at<double>(1, 2) * compressionConfig;
-                        double da = atan2(T.at<double>(1, 0), T.at<double>(0, 0));
-                        
-                        frameData.transformFirstDerivative = TransformParam(dx, dy, da);
-                    } else {
-                        frameData.transformFirstDerivative = TransformParam(0, 0, 0);
-                    }
+                    frameData.transformFirstDerivative = TransformParam(dx, dy, da);
                 } else {
                     frameData.transformFirstDerivative = TransformParam(0, 0, 0);
                 }
-                
-                // Обновляем данные для следующего кадра
-                frameData.grayCPU.copyTo(prevGrayCPU);
-                prevPoints = goodNew;
-                frameData.points = goodNew;
-                
-                trackedPoints.store(static_cast<int>(goodNew.size()));
-                consecutiveFailures = 0;
             } else {
-                if (consecutiveFailures++ > MAX_CONSECUTIVE_FAILURES) {
-                    firstFrameForTracking = true;
-                    consecutiveFailures = 0;
-                    trackedPoints.store(0);
-                }
                 frameData.transformFirstDerivative = TransformParam(0, 0, 0);
             }
             
-            // Адаптивная настройка параметров детектора
-            if ((frameData.points.size() < maxCornersConfig / 6)) {
-                qualityLevelConfig *= 0.98;
-                harrisKConfig *= 0.98;
-                detector->setQualityLevel(qualityLevelConfig);
-                detector->setK(harrisKConfig);
+            // Сохраняем отслеженные точки
+            frameData.points = goodNew;
+            trackedPoints.store(static_cast<int>(goodNew.size()));
+            consecutiveFailures = 0;
+        } else {
+            if (consecutiveFailures++ > MAX_CONSECUTIVE_FAILURES) {
+                firstFrameForTracking = true;
+                consecutiveFailures = 0;
+                trackedPoints.store(0);
             }
-            if ((frameData.points.size() > maxCornersConfig * 4 / 5)) {
-                qualityLevelConfig *= 1.02;
-                harrisKConfig *= 1.02;
-                detector->setQualityLevel(qualityLevelConfig);
-                detector->setK(harrisKConfig);
-            }
-
-            auto endTimeDetTrack = chrono::steady_clock::now();
-            auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - startTimeDetTrack);
-            processingTimeDetectionTracking = (processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
-            
-            // Ждем, если очередь переполнена
-            while (processedFramesQueue.size() >= MAX_QUEUE_SIZE && running) {
-                this_thread::sleep_for(chrono::milliseconds(5));
-            }
-            
-            processedFramesQueue.push(move(frameData));
+            frameData.transformFirstDerivative = TransformParam(0, 0, 0);
         }
         
-        cout << "Detection and Tracking thread stopped. Processed " << framesProcessedInThread << " frames." << endl;
+        // --- ЭТАП 2: ДОБАВЛЕНИЕ НОВЫХ ТОЧЕК (если нужно) ---
+        int currentPointCount = frameData.points.size();
+        bool needMorePoints = currentPointCount < maxCornersConfig * 0.7; // Нужно больше точек если меньше 70% от максимума
+        bool timeToRedetect = framesSinceLastRedetection >= REDETECTION_INTERVAL && !firstFrameForTracking;
+        
+        if (firstFrameForTracking || prevPoints.empty() || needMorePoints && timeToRedetect) {
+            
+            // Сбрасываем счетчик при детектировании
+            framesSinceLastRedetection = 0;
+            
+            // Детектирование новых точек на CPU
+            Mat maskCPU = Mat::zeros(frameData.grayCPU.size(), CV_8U);
+            int marginX = frameData.grayCPU.cols / 8;
+            int marginY = frameData.grayCPU.rows / 8;
+            rectangle(maskCPU, 
+                    Rect(marginX, marginY, 
+                        frameData.grayCPU.cols - 2 * marginX, 
+                        frameData.grayCPU.rows - 2 * marginY),
+                    Scalar(255), FILLED);
+            
+            vector<KeyPoint> keypoints;
+            try {
+                detector->detect(frameData.grayCPU, keypoints, maskCPU);
+            } catch (const exception& e) {
+                cerr << "Error in detector: " << e.what() << endl;
+                continue;
+            }
+            
+            // Создаем маску для исключения областей с существующими точками
+            Mat exclusionMask = Mat::zeros(frameData.grayCPU.size(), CV_8U);
+            if (!frameData.points.empty()) {
+                for (const auto& pt : frameData.points) {
+                    circle(exclusionMask, pt, static_cast<int>(minDistanceConfig), Scalar(255), FILLED);
+                }
+            }
+            
+            // Вычисляем сколько новых точек нужно добавить (максимум 5% от максимума)
+            int maxNewPoints = max(1, static_cast<int>(maxCornersConfig * 0.05));
+            int targetNewPoints = min(maxNewPoints, maxCornersConfig - static_cast<int>(frameData.points.size()));
+            
+            if (targetNewPoints > 0 && !keypoints.empty()) {
+                // Сортируем ключевые точки по качеству (силе отклика)
+                sort(keypoints.begin(), keypoints.end(), 
+                     [](const KeyPoint& a, const KeyPoint& b) {
+                         return a.response > b.response;
+                     });
+                
+                // Выбираем новые точки, которые не попадают в зоны существующих
+                vector<Point2f> newPoints;
+                for (const auto& kp : keypoints) {
+                    if (newPoints.size() >= targetNewPoints) break;
+                    
+                    int x = static_cast<int>(kp.pt.x);
+                    int y = static_cast<int>(kp.pt.y);
+                    
+                    // Проверяем границы
+                    if (x >= 0 && x < exclusionMask.cols && y >= 0 && y < exclusionMask.rows) {
+                        // Проверяем, не попадает ли точка в зону исключения
+                        if (exclusionMask.at<uchar>(y, x) == 0) {
+                            newPoints.push_back(kp.pt);
+                            // Добавляем в маску исключения, чтобы не брать близкие точки
+                            circle(exclusionMask, kp.pt, static_cast<int>(minDistanceConfig), Scalar(255), FILLED);
+                        }
+                    }
+                }
+                
+                // Добавляем новые точки к существующим
+                if (!newPoints.empty()) {
+                    frameData.points.insert(frameData.points.end(), newPoints.begin(), newPoints.end());
+                    // Удаляем слишком близкие точки и ограничиваем до максимума
+                    removeFramePoints(frameData.points, minDistanceConfig * 0.8);
+                    if (frameData.points.size() > maxCornersConfig) {
+                        frameData.points.resize(maxCornersConfig);
+                    }
+                }
+            }
+            
+            if (firstFrameForTracking) {
+                // Первый кадр - просто сохраняем точки
+                prevPoints = frameData.points;
+                frameData.grayCPU.copyTo(prevGrayCPU);
+                firstFrameForTracking = false;
+                trackedPoints.store(static_cast<int>(prevPoints.size()));
+            }
+        } else {
+            // Если не детектируем, увеличиваем счетчик
+            framesSinceLastRedetection++;
+        }
+        
+        // Обновляем prevPoints для следующего кадра (используем обновленный frameData.points)
+        if (!firstFrameForTracking) {
+            prevPoints = frameData.points;
+            frameData.grayCPU.copyTo(prevGrayCPU);
+        }
+        
+        // Адаптивная настройка параметров детектора
+        if ((frameData.points.size() < maxCornersConfig / 6)) {
+            qualityLevelConfig *= 0.98;
+            harrisKConfig *= 0.98;
+            detector->setQualityLevel(qualityLevelConfig);
+            detector->setK(harrisKConfig);
+        }
+        if ((frameData.points.size() > maxCornersConfig * 4 / 5)) {
+            qualityLevelConfig *= 1.02;
+            harrisKConfig *= 1.02;
+            detector->setQualityLevel(qualityLevelConfig);
+            detector->setK(harrisKConfig);
+        }
+
+        auto endTimeDetTrack = chrono::steady_clock::now();
+        auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - startTimeDetTrack);
+        processingTimeDetectionTracking = (processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
+        
+        // Ждем, если очередь переполнена
+        while (processedFramesQueue.size() >= MAX_QUEUE_SIZE && running) {
+            this_thread::sleep_for(chrono::milliseconds(5));
+        }
+        
+        processedFramesQueue.push(move(frameData));
     }
+    
+    cout << "Detection and Tracking thread stopped. Processed " << framesProcessedInThread << " frames." << endl;
+}
     
     // ========================= ПОТОК СТАБИЛИЗАЦИИ (ТОЛЬКО ЗДЕСЬ ИСПОЛЬЗУЕТСЯ GPU) =========================
     void stabilizationThread() {
@@ -996,15 +943,14 @@ private:
             Mat displayFrame;
             resize(frameData.frameCPU, displayFrame, Size(a, b), INTER_AREA);
             
-            string infoText = format("FPS: %d | Proc: %2.1f ms | tau: %2.1f | part: %1.2f | Skip: %d",
+            string infoText = format("FPS: %d | points: %d | tau: %2.1f | part: %1.2f | Skip: %d",
                                     fps.load(),
-                                    processingTimeCapture + processingTimeDetectionTracking + 
-                                    processingTimeStabilization + processingTimeImshow, 
+                                    frameData.points.size(), 
                                     tauStab, framePart, framesSkipped.load());
 
-            string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Show: %2.1f | Q: %d / %d ",
+            string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %d / %d ",
                                     processingTimeCapture, processingTimeDetectionTracking, 
-                                    processingTimeStabilization, processingTimeImshow,
+                                    processingTimeStabilization,
                                     rawFramesQueue.size(), processedFramesQueue.size());
 
             putText(displayFrame, infoText, Point(10, 50 * a / 800),
@@ -1150,22 +1096,22 @@ private:
         if (transforms.da > CV_PI) transforms.da -= CV_PI;
         if (transforms.da < -CV_PI) transforms.da += CV_PI;
 
-        if (tauStab < 30.0) tauStab *= 1.2;
-        if (tauStab < 50.0 && !(abs(transforms.dx) > a / 2 || abs(transforms.dy) > b / 2)) tauStab *= 1.1;
-        if (tauStab < 100.0 && !(abs(transforms.dx) > a / 3 || abs(transforms.dy) > b / 3)) {
+        if (tauStab < TAU_STAB_MAX/4) tauStab *= 1.2;
+        if (tauStab < TAU_STAB_MAX/2 && !(abs(transforms.dx) > a / 2 || abs(transforms.dy) > b / 2)) tauStab *= 1.1;
+        if (tauStab < TAU_STAB_MAX && !(abs(transforms.dx) > a / 3 || abs(transforms.dy) > b / 3)) {
             tauStab *= 1.1;
-            if (tauStab > 100.0) tauStab = 100.0;
+            if (tauStab > TAU_STAB_MAX) tauStab = TAU_STAB_MAX;
         }
 
         if (roi.x + (int)transforms.dx < 0) {
             transforms.dx = double(1 - roi.x);
-            if (tauStab > 50) {
+            if (tauStab > TAU_STAB_MAX/2) {
                 tauStab *= 0.9;
                 kSwitch *= 0.95;
             }
         } else if (roi.x + roi.width + (int)transforms.dx >= a) {
             transforms.dx = (double)(a - roi.x - roi.width);
-            if (tauStab > 50) {
+            if (tauStab > TAU_STAB_MAX/2) {
                 tauStab *= 0.9;
                 kSwitch *= 0.95;
             }
@@ -1173,13 +1119,13 @@ private:
 
         if (roi.y + (int)transforms.dy < 0) {
             transforms.dy = (double)(1 - roi.y);
-            if (tauStab > 10) {
+            if (tauStab > TAU_STAB_MAX/8) {
                 tauStab *= 0.9;
                 kSwitch *= 0.95;
             }
         } else if (roi.y + roi.height + (int)transforms.dy >= b) {
             transforms.dy = (double)(b - roi.y - roi.height);
-            if (tauStab > 50) {
+            if (tauStab > TAU_STAB_MAX/2) {
                 tauStab *= 0.9;
                 kSwitch *= 0.95;
             }
