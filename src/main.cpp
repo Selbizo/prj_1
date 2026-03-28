@@ -18,7 +18,7 @@ int main()
 		noiseOut[i] = {0.0, 0.0, 0.0};
 	
 	cv::Mat TShake(2, 3, CV_64F);
-
+	cv::Mat Smooth;
 	vector <TransformParam> X(1+NCoef), Y(1 + NCoef);
 
 	//Автоматическое создание папок
@@ -165,6 +165,9 @@ int main()
 	double LEN = 0;
 	double THETA = 0.0;
 
+
+	double TRUE_LEN = 0;
+	double TRUE_THETA = 0.0;
 	//для обработки трех каналов по Виннеру
 	vector<Mat> channels(3), channelsWiener(3);
 	Mat frame_wiener;
@@ -380,13 +383,25 @@ int main()
 
 		secondsGPUPing = 0.96 * secondsGPUPing + 0.04 * (double)(endGPUPing - startGPUPing) / CLOCKS_PER_SEC;
 
-		noiseIn.dx = (double)(rng.uniform(-100.0, 100.0))*0.01 + 20.0*sin((double)(frameCount*DEG_TO_RAD*80.0));
-		noiseIn.dy = (double)(rng.uniform(-100.0, 100.0))*0.01 + 20.0*cos((double)(frameCount*DEG_TO_RAD*80.0));
-		noiseIn.da = (double)(rng.uniform(-50.0, 50.0)* 0.001 * DEG_TO_RAD) - 5.0*DEG_TO_RAD*sin((double)(frameCount*DEG_TO_RAD*40.0));
+		noiseIn.dx = (double)(rng.uniform(-100.0, 100.0))*0.01 + 1.0*sin((double)(frameCount*DEG_TO_RAD*1.0));
+		noiseIn.dy = (double)(rng.uniform(-100.0, 100.0))*0.01 + 20.0*cos((double)(frameCount*DEG_TO_RAD*20.0));
+		noiseIn.da = (double)(rng.uniform(-50.0, 50.0)* 0.001 * DEG_TO_RAD) - 0.050*DEG_TO_RAD*sin((double)(frameCount*DEG_TO_RAD*4.0));
 			
-		noiseOut[0] = iirNoise(noiseIn, X, Y);
+		//noiseOut[0] = iirNoise(noiseIn, X, Y);
 
-		noiseOut[0].getTransform(TShake);
+		noiseIn.getTransform(TShake);
+
+		TRUE_LEN = sqrt(noiseIn.dx * noiseIn.dx + noiseIn.dy * noiseIn.dy) * 0.2;
+		if (noiseIn.dx == 0.0)
+			if (noiseIn.dy > 0.0)
+				TRUE_THETA = 90.0;
+			else
+				TRUE_THETA = -90.0;
+		else
+		TRUE_THETA = atan(noiseIn.dy / noiseIn.dx) * RAD_TO_DEG;
+
+		calcPSF(Smooth, cv::Size((int)TRUE_LEN * 1 + 10, (int)TRUE_LEN * 1 + 10), TRUE_LEN, TRUE_THETA);       
+
 		//noiseIn.getTransform(TShake);
 
 		if (stabPossible) {
@@ -437,7 +452,7 @@ int main()
 			}
 
 			
-
+			cv::filter2D(frame, frame, -1, Smooth, cv::Point(-1,-1), 0, cv::BORDER_DEFAULT);
     		warpAffine(frame, frame, TShake, frame.size());
 		}
 
@@ -490,13 +505,7 @@ int main()
 				loadImage(frame, frameCount, filepath);
 			}
 			
-			// noiseIn.dx = (double)(rng.uniform(-10.0, 10.0));
-       		// noiseIn.dy = (double)(rng.uniform(-10.0, 10.0));
-       		// noiseIn.da = (double)(rng.uniform(-0.1, 0.1));
-
-       		// noiseOut[0] = iirNoise(noiseIn, X, Y);
-
-    		// noiseOut[0].getTransform(TShake);
+			cv::filter2D(frame, frame, -1, Smooth, cv::Point(-1,-1), 0, cv::BORDER_DEFAULT);
     		warpAffine(frame, frame, TShake, frame.size());
 
 			if (!stabPossible) {
