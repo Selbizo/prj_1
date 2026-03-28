@@ -54,6 +54,29 @@ const int winSizeConfig = blockSizeConfig;
 const int maxLevelConfig = 5;
 const int itersConfig = 10;
 
+// переменные для фильтра Виннера
+Mat Hw, h, gray_wiener;
+cv::UMat gHw, gH, gGrayWiener;
+
+bool wiener = false;
+bool threadwiener = false;
+double nsr = 0.01;
+double qWiener = 2.0; // скважность считывания кадра на камере (выдержка к частоте кадров) (умножена на 10)
+double LEN = 0;
+double THETA = 0.0;
+
+
+double TRUE_LEN = 0;
+double TRUE_THETA = 0.0;
+//для обработки трех каналов по Виннеру
+vector<Mat> channels(3), channelsWiener(3);
+Mat frame_wiener;
+
+vector<cv::UMat> gChannels(3), gChannelsWiener(3);
+cv::UMat gFrameWiener;
+
+
+
 // Источник видео
 string videoSource = "/home/pi/opencv_projects/videos/PXL_1.mp4";
 
@@ -235,7 +258,7 @@ private:
     // Общие ресурсы
     mutex resourcesMutex;
     Ptr<GFTTDetector> detector;
-    
+
     // Для отслеживания точек между кадрами (все на CPU)
     Mat prevGrayCPU;           // Предыдущий серый кадр на CPU
     vector<Point2f> prevPoints;
@@ -811,7 +834,45 @@ void detectionAndTrackingThread() {
                     }
                     
                     // ==== здесь выполняем винеровскую фильтрацию
+                    //UMat gFrame;
+                    if (kSwitch > 0.01)
+                    {
+                        UMat zeroMatH(cv::Size(a, b), CV_32F, Scalar(0)), complexH;
+                        vector<UMat> gChannels(3), gChannelsWiener(3);
+                        frameData.frameCPU.copyTo(frameData.frameGPU);
+                        double LEN, THETA;
+                        LEN = sqrt(frameData.transformFirstDerivative.dx * frameData.transformFirstDerivative.dx + 
+                            frameData.transformFirstDerivative.dy * frameData.transformFirstDerivative.dy);
+                        if (frameData.transformFirstDerivative.dx == 0.0)
+                            if (frameData.transformFirstDerivative.dy > 0.0)
+                                THETA = 90.0;
+                            else
+                                THETA = -90.0;
+                        else
+                            THETA = atan(frameData.transformFirstDerivative.dy / frameData.transformFirstDerivative.dx) * RAD_TO_DEG;
+
+                        bilateralFilter(frameData.frameGPU, frameData.frameGPU, 3, 1.0, 1.0);
+                        frameData.frameGPU.convertTo(frameData.frameGPU, CV_32F);
+                        split(frameData.frameGPU, gChannels);
+
+                        GcalcPSF(gH, frameData.frameGPU.size(), cv::Size((int)LEN * 1 + 10, (int)LEN * 1 + 10), LEN, THETA);
+                        GcalcWnrFilter(gH, gHw, nsr);
+
+                        // Объединяем действительную и мнимую часть фильтра в комплексную матрицу
+                        vector<cv::UMat> planesH = { gHw, zeroMatH };
+
+                        cv::merge(planesH, complexH);
+                        
+                        for (unsigned short i = 0; i < 3; i++) //обработка трех цветных каналов можно разделить на три потока
+                        {
+                            Gfilter2DFreq(gChannels[i], gChannelsWiener[i], complexH);
+                        }
                     
+                        cv::merge(gChannelsWiener, frameData.frameGPU);
+                        frameData.frameGPU.convertTo(frameData.frameGPU, CV_8UC3);
+                        //cv::bilateralFilter(frameData.frameGPU, frameData.frameGPU, 3, 1.0, 1.0);
+                    }
+
 
 
                     // ==== ТОЛЬКО ЗДЕСЬ ИСПОЛЬЗУЕМ GPU ====
@@ -980,7 +1041,7 @@ void detectionAndTrackingThread() {
             }
             
             auto frameElapsed = chrono::duration_cast<chrono::milliseconds>(now - lastFrameTime);
-            if (frameElapsed.count() < 10) { // Ограничение до ~100 FPS
+            if (frameElapsed.count() < 100) { // Ограничение до ~100 FPS
                 this_thread::sleep_for(chrono::milliseconds(33 - frameElapsed.count()));
             }
             lastFrameTime = now;
@@ -1143,112 +1204,133 @@ void detectionAndTrackingThread() {
 
         transforms.getTransformInvert(stabMatrix);
     }
+  
+
+    //WITH OPENCL
+    void GcalcPSF(cv::UMat& outputImg, Size filterSize, Size psfSize, double len, double theta)
+    {
+        int scale = 8;
+        cv::UMat h(filterSize, CV_32F, Scalar(0));
+        Mat hCpu(psfSize, CV_32F, Scalar(0));
+        Mat hCpuBig(Size(psfSize.width * scale, psfSize.height * scale), CV_32F, Scalar(0));
+        Point center(psfSize.width * scale / 2, psfSize.height * scale / 2);
+
+        Size axes(scale, cvRound(double(len * scale + scale) / 2.0f));
+        Size axes2(scale, cvRound(double(len * scale + scale) / 4.0f));
+        Size axes3(scale, cvRound(double(len * scale + scale) / 6.0f));
+        
+        double angle = 90.0 - theta;
+
+        
+
+        ellipse(hCpuBig, center, axes, angle, 0, 360, Scalar(0.2), FILLED);
+
+        ellipse(hCpuBig, center, axes2, angle, 0, 360, Scalar(0.4), FILLED);
+        ellipse(hCpuBig, center, axes2, angle, 0, 360, Scalar(0.9), FILLED);
+        resize(hCpuBig, hCpu, psfSize, INTER_LINEAR);
+        if (hCpu.cols > h.cols / 2)
+            resize(hCpu, hCpu, Size(h.cols / 2 - 1, hCpu.rows), INTER_LINEAR);
+        if (hCpu.rows > h.rows / 2)
+            resize(hCpu, hCpu, Size(hCpu.cols, h.rows / 2 - 1), INTER_LINEAR);
+        
+        imshow("PSF Cpu", hCpu);
+        //hCpu(Rect(0, 0, psfSize.width, psfSize.height)).copyTo(h(Rect((filterSize.width - psfSize.width) / 2, (filterSize.height - psfSize.height) / 2, psfSize.width, psfSize.height)));
+        hCpu(Rect(0, 0, hCpu.cols, hCpu.rows)).copyTo(h(Rect((filterSize.width - hCpu.cols) / 2, (filterSize.height - hCpu.rows) / 2, hCpu.cols, hCpu.rows)));
+
+        Scalar summa = cv::sum(h);
+
+        cv::divide(h, Scalar(summa[0]), outputImg);
+
+    }
+
+    void Gfftshift(const cv::UMat& inputImg, cv::UMat& outputImg)
+    {
+        outputImg = inputImg.clone();
+        int cx = outputImg.cols / 2;
+        int cy = outputImg.rows / 2;
+        cv::UMat q0(outputImg, Rect(0, 0, cx, cy));
+        cv::UMat q1(outputImg, Rect(cx, 0, cx, cy));
+        cv::UMat q2(outputImg, Rect(0, cy, cx, cy));
+        cv::UMat q3(outputImg, Rect(cx, cy, cx, cy));
+        cv::UMat tmp;
+        q0.copyTo(tmp);
+        q3.copyTo(q0);
+        tmp.copyTo(q3);
+        q1.copyTo(tmp);
+        q2.copyTo(q1);
+        tmp.copyTo(q2);
+    }
+
+    void Gfilter2DFreq(const cv::UMat& inputImg, cv::UMat& outputImg, const cv::UMat& complexH)
+    {
+        cv::UMat zeroMat(inputImg.size(), CV_32F, Scalar(0));
+
+
+        vector<cv::UMat> planes = { inputImg, zeroMat };
+        cv::UMat complexInput;
+        cv::merge(planes, complexInput);
+        dft(complexInput, complexInput, DFT_COMPLEX_OUTPUT | DFT_SCALE);
+        cv::UMat complexOutput;
+        cv::mulSpectrums(complexInput, complexH, complexOutput, 0);
+        dft(complexOutput, complexOutput, DFT_INVERSE | DFT_COMPLEX_INPUT);
+        vector<cv::UMat> planesOut;
+        cv::split(complexOutput, planesOut);
+        outputImg = planesOut[0];
+    }
+
+    void GcalcWnrFilter(const cv::UMat& input_h_PSF, cv::UMat& output_G, double nsr)
+    {
+        cv::UMat h_PSF_shifted;
+        Gfftshift(input_h_PSF, h_PSF_shifted);
+        cv::UMat zeroMat(h_PSF_shifted.size(), CV_32F, Scalar(0));
+        vector<cv::UMat> planes = { h_PSF_shifted, zeroMat };
+        cv::UMat complexI;
+        cv::merge(planes, complexI);
+
+        cv::dft(complexI, complexI);
+        vector<cv::UMat> planesOut;
+        cv::split(complexI, planesOut);
+        cv::UMat denom;
+        cv::magnitude(planesOut[0], planesOut[1], denom);
+        cv::pow(denom, 2, denom);
+        cv::add(denom, nsr, denom);
+        cv::divide(planesOut[0], denom, output_G);
+    }
+
+    void Gedgetaper(const Mat& inputImg, Mat& outputImg, double gamma, double beta)
+    {
+        int Nx = inputImg.cols;
+        int Ny = inputImg.rows;
+        Mat w1(1, Nx, CV_32F, Scalar(0));
+        Mat w2(Ny, 1, CV_32F, Scalar(0));
+
+        double* p1 = w1.ptr<double>(0);
+        double* p2 = w2.ptr<double>(0);
+        double dx = double(2.0 * CV_PI / Nx);
+        double x = double(-CV_PI);
+        for (int i = 0; i < Nx; i++)
+        {
+            p1[i] = double(0.5 * (tanh((x + gamma / 2) / beta) - tanh((x - gamma / 2) / beta)));
+            x += dx;
+        }
+        double dy = double(2.0 * CV_PI / Ny);
+        double y = double(-CV_PI);
+        for (int i = 0; i < Ny; i++)
+        {
+            p2[i] = double(0.5 * (tanh((y + gamma / 2) / beta) - tanh((y - gamma / 2) / beta)));
+            y += dy;
+        }
+        Mat w = w2 * w1;
+        multiply(inputImg, w, outputImg);
+    }
+
+    void channelWiener(const cv::UMat* gChannel, cv::UMat* gChannelWiener,
+        const cv::UMat* complexH)
+    {
+        Gfilter2DFreq(*gChannel, *gChannelWiener, *complexH);
+    }
+
 };
-
-void calcPSF(Mat& outputImg, Size filterSize, int len, double theta)
-{
-	Mat h(filterSize, CV_32F, Scalar(0));
-	Point point(filterSize.width / 2, filterSize.height / 2);
-	ellipse(h, point, Size(0, cvRound(double(len) / 2.0)), 90.0 - theta, 0, 360, Scalar(255), FILLED);
-	Scalar summa = sum(h);
-	outputImg = h / summa[0];
-
-	Mat outputImg_norm;
-	normalize(outputImg, outputImg_norm, 0, 255, NORM_MINMAX);
-	cv::imshow("PSF", outputImg_norm);
-}
-
-void calcPSF_circle(Mat& outputImg, Size filterSize, int len, double theta)
-{
-	Mat h(filterSize, CV_32F, Scalar(0));
-	Point point(filterSize.width / 2, filterSize.height / 2);
-	ellipse(h, point, Size(cvRound(double(len) / 2.0), cvRound(double(len) / 2.0)), 90.0 - theta, 0, 360, Scalar(255), FILLED);
-	Scalar summa = sum(h);
-	outputImg = h / summa[0];
-
-
-	Mat outputImg_norm;
-	normalize(outputImg, outputImg_norm, 0, 255, NORM_MINMAX);
-	cv::imshow("PSF", outputImg_norm);
-}
-
-void fftshift(const Mat& inputImg, Mat& outputImg)
-{
-	outputImg = inputImg.clone();
-	int cx = outputImg.cols / 2;
-	int cy = outputImg.rows / 2;
-	Mat q0(outputImg, Rect(0, 0, cx, cy));
-	Mat q1(outputImg, Rect(cx, 0, cx, cy));
-	Mat q2(outputImg, Rect(0, cy, cx, cy));
-	Mat q3(outputImg, Rect(cx, cy, cx, cy));
-	Mat tmp;
-	q0.copyTo(tmp);
-	q3.copyTo(q0);
-	tmp.copyTo(q3);
-	q1.copyTo(tmp);
-	q2.copyTo(q1);
-	tmp.copyTo(q2);
-}
-
-void filter2DFreq(const Mat& inputImg, Mat& outputImg, const Mat& H)
-{
-	Mat planes[2] = { Mat_<double>(inputImg.clone()), Mat::zeros(inputImg.size(), CV_32F) };
-	Mat complexI;
-	merge(planes, 2, complexI);
-	dft(complexI, complexI, DFT_SCALE);
-
-	Mat planesH[2] = { Mat_<double>(H.clone()), Mat::zeros(H.size(), CV_32F) };
-	Mat complexH;
-	merge(planesH, 2, complexH);
-	Mat complexIH;
-	mulSpectrums(complexI, complexH, complexIH, 0);
-
-	idft(complexIH, complexIH);
-	split(complexIH, planes);
-	outputImg = planes[0];
-}
-
-void calcWnrFilter(const Mat& input_h_PSF, Mat& output_G, double nsr)
-{
-	Mat h_PSF_shifted;
-	fftshift(input_h_PSF, h_PSF_shifted);
-	Mat planes[2] = { Mat_<double>(h_PSF_shifted.clone()), Mat::zeros(h_PSF_shifted.size(), CV_32F) };
-	Mat complexI;
-	merge(planes, 2, complexI);
-	dft(complexI, complexI);
-	split(complexI, planes);
-	Mat denom;
-	pow(abs(planes[0]), 2, denom);
-	denom += nsr;
-	divide(planes[0], denom, output_G);
-}
-
-void edgetaper(const Mat& inputImg, Mat& outputImg, double gamma, double beta)
-{
-	int Nx = inputImg.cols;
-	int Ny = inputImg.rows;
-	Mat w1(1, Nx, CV_32F, Scalar(0));
-	Mat w2(Ny, 1, CV_32F, Scalar(0));
-
-	double* p1 = w1.ptr<double>(0);
-	double* p2 = w2.ptr<double>(0);
-	double dx = double(2.0 * CV_PI / Nx);
-	double x = double(-CV_PI);
-	for (int i = 0; i < Nx; i++)
-	{
-		p1[i] = double(0.5 * (tanh((x + gamma / 2) / beta) - tanh((x - gamma / 2) / beta)));
-		x += dx;
-	}
-	double dy = double(2.0 * CV_PI / Ny);
-	double y = double(-CV_PI);
-	for (int i = 0; i < Ny; i++)
-	{
-		p2[i] = double(0.5 * (tanh((y + gamma / 2) / beta) - tanh((y - gamma / 2) / beta)));
-		y += dy;
-	}
-	Mat w = w2 * w1;
-	multiply(inputImg, w, outputImg);
-}
 
 
 
