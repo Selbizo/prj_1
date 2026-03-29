@@ -39,7 +39,7 @@ const Scalar colorBLACK(0, 0, 0);
 
 // Настройки системы
 const bool recordEnable = false;
-const int compressionConfig = 3; // Сжатие для обработки
+const int compressionConfig = 5; // Сжатие для обработки
 const float TAU_STAB_MAX = 120;
 // Настройки детектора
 int maxCornersConfig = 200;
@@ -663,10 +663,24 @@ void detectionAndTrackingThread() {
     
     while (running) {
         FrameData frameData;
-        if (!rawFramesQueue.wait_and_pop(frameData)) {
-            if (!running) break;
+        // if (!rawFramesQueue.wait_and_pop(frameData)) {
+        //     if (!running) break;
+        //     continue;
+        // }
+
+        for (int attempt = 0; attempt < 500 && running; attempt++) {
+            if (rawFramesQueue.try_pop(frameData)) {
+                break;
+            }
+            this_thread::sleep_for(chrono::milliseconds(10));
+        }
+        
+        if (!running) break;
+        
+        if (frameData.frameCPU.empty()) {
             continue;
         }
+
         
         auto startTimeDetTrack = chrono::steady_clock::now();
         framesProcessedInThread++;
@@ -1027,7 +1041,7 @@ void detectionAndTrackingThread() {
                     
                     // ==== СТАБИЛИЗАЦИЯ ====
                     UMat stabilizedFrame, croppedFrame;
-                    warpAffine(frameData.frameGPU, stabilizedFrame, frameData.stabMatrix, frameSize, cv::INTER_CUBIC, cv::BORDER_REPLICATE);
+                    warpAffine(frameData.frameGPU, stabilizedFrame, frameData.stabMatrix, frameSize, cv::INTER_NEAREST, cv::BORDER_TRANSPARENT);
                     croppedFrame = stabilizedFrame(roi);
                     
                     // Копируем результат обратно на CPU для отображения
