@@ -81,9 +81,9 @@ cv::UMat gFrameWiener;
 string videoSource = "/home/pi/opencv_projects/videos/PXL_1.mp4";
 
 // ========================= НОВЫЕ КОНСТАНТЫ ДЛЯ УПРАВЛЕНИЯ ПАМЯТЬЮ =========================
-const int MAX_QUEUE_SIZE = 5;           // Максимальный размер очередей
-const int MAX_FRAME_BUFFER_SIZE = 7;    // Максимальный размер буфера кадров для отображения
-const int SKIP_FRAMES_THRESHOLD = 2;    // Сколько кадров пропускать при переполнении
+const int MAX_QUEUE_SIZE = 10;           // Максимальный размер очередей
+const int MAX_FRAME_BUFFER_SIZE = 15;    // Максимальный размер буфера кадров для отображения
+const int SKIP_FRAMES_THRESHOLD = 5;    // Сколько кадров пропускать при переполнении
 
 // ========================= СТРУКТУРЫ ДАННЫХ =========================
 
@@ -411,12 +411,14 @@ private:
         displayThread();
     }
     
-    // ========================= ПОТОК ЗАХВАТА КАДРОВ =========================
+    // ========================= ПОТОК ЗАХВАТА КАДРОВ (С ЗАМЕДЛЕНИЕМ ДЛЯ ВИДЕОФАЙЛОВ) =========================
     void captureThread(bool useCamera, const string& imageFolderPath) {
         // В этом потоке работаем только с CPU данными
         cv::ocl::setUseOpenCL(false); // Отключаем OpenCL для захвата
         
         VideoCapture cap;
+        double videoFPS = 15.0; // Значение по умолчанию        
+        
         if (useCamera) {
             cap.open(videoSource);
             frameSize = Size(
@@ -441,7 +443,23 @@ private:
             }
             
             frameSize = Size(firstFrameCPU.cols, firstFrameCPU.rows);
+            videoFPS = 15.0; // Стандартный FPS для последовательности
         }
+        
+        // Получаем FPS видеофайла (если это видеофайл, а не камера)
+        if (cap.isOpened() && !useCamera) {
+            double fpsFromFile = cap.get(CAP_PROP_FPS);
+            if (fpsFromFile > 0) {
+                videoFPS = fpsFromFile;
+                cout << "Video file FPS: " << videoFPS << endl;
+            }
+        }
+        
+        // Для видеофайлов включаем замедление для синхронизации с реальным временем
+        bool shouldThrottle = !useCamera; // Для файлов и последовательностей изображений
+        double frameDelayMs = 1000.0 / videoFPS; // Задержка между кадрами в миллисекундах
+        
+        cout << "Frame delay: " << frameDelayMs << " ms (" << videoFPS << " FPS)" << endl;
         
         a = frameSize.width;
         b = frameSize.height;
@@ -461,31 +479,52 @@ private:
         
         int frameId = 0;
         auto lastFpsTime = chrono::steady_clock::now();
+        auto lastFrameTime = chrono::steady_clock::now();
         int frameCount = 0;
         int consecutiveSkips = 0;
         
         while (running) {
             auto startTimeCap = chrono::steady_clock::now();
+            
+            // ========== УПРАВЛЕНИЕ ЗАДЕРЖКОЙ ДЛЯ ВИДЕОФАЙЛОВ ==========
+            if (shouldThrottle && frameId > 0) {
+                auto now = chrono::steady_clock::now();
+                auto elapsed = chrono::duration_cast<chrono::milliseconds>(now - lastFrameTime).count();
+                
+                if (elapsed < frameDelayMs) {
+                    // Спим оставшееся время, чтобы синхронизироваться с реальным временем
+                    int sleepMs = static_cast<int>(frameDelayMs - elapsed);
+                    if (sleepMs > 0 && sleepMs < 100) {
+                        this_thread::sleep_for(chrono::milliseconds(sleepMs));
+                    }
+                }
+            }
+            
             int totalLag = rawFramesQueue.size() + processedFramesQueue.size();
             
+            // Более мягкая политика пропуска кадров для видеофайлов
+            int maxAllowedLag = shouldThrottle ? MAX_PROCESSING_LAG * 2 : MAX_PROCESSING_LAG;
+            
             // Если лаг слишком большой, пропускаем кадры
-            if (totalLag > MAX_PROCESSING_LAG) {
+            if (totalLag > maxAllowedLag) {
                 consecutiveSkips++;
                 
-                // Пропускаем несколько кадров подряд при сильной перегрузке
+                // Пропускаем кадры при сильной перегрузке
                 if (consecutiveSkips > SKIP_FRAMES_THRESHOLD) {
-                    //cout << "High load, skipping frames..." << endl;
-                    framesSkipped += SKIP_FRAMES_THRESHOLD;
+                    framesSkipped++;
                     
                     if (useCamera) {
                         // Для камеры просто читаем и отбрасываем кадр
                         Mat dummy;
                         cap.read(dummy);
                     }
+                    // Для видеофайлов - просто пропускаем этот кадр
+                    
                     consecutiveSkips = 0;
                 }
                 
-                this_thread::sleep_for(chrono::milliseconds(2));
+                // Небольшая задержка для снижения нагрузки
+                this_thread::sleep_for(chrono::milliseconds(5));
                 continue;
             }
             
@@ -505,18 +544,35 @@ private:
                     continue;
                 }
             } else {
-                // Режим изображений
-                loadImage(frameData.frameCPU, frameData.frameId % 1200, imageFolderPath);
-                
-                if (frameData.frameCPU.empty()) {
-                    cerr << "Failed to load image for frame " << frameData.frameId << endl;
-                    loadImage(frameData.frameCPU, frameData.frameId % 1200 + 1, imageFolderPath);
-                    if (frameData.frameCPU.empty()) {
-                        cout << "Image sequence ended" << endl;
-                        running = false;
-                        break;
+                // Режим видеофайла или последовательности изображений
+                if (cap.isOpened()) {
+                    // Читаем из видеофайла
+                    bool frameRead = cap.read(frameData.frameCPU);
+                    if (!frameRead || frameData.frameCPU.empty()) {
+                        // Видео закончилось - перематываем на начало (loop)
+                        cout << "Video ended, restarting..." << endl;
+                        cap.set(CAP_PROP_POS_FRAMES, 0);
+                        frameRead = cap.read(frameData.frameCPU);
+                        if (!frameRead || frameData.frameCPU.empty()) {
+                            cout << "Cannot restart video, stopping..." << endl;
+                            running = false;
+                            break;
+                        }
                     }
-                    frameData.frameId++;
+                } else {
+                    // Режим изображений
+                    loadImage(frameData.frameCPU, frameData.frameId % 1200, imageFolderPath);
+                    
+                    if (frameData.frameCPU.empty()) {
+                        cerr << "Failed to load image for frame " << frameData.frameId << endl;
+                        loadImage(frameData.frameCPU, frameData.frameId % 1200 + 1, imageFolderPath);
+                        if (frameData.frameCPU.empty()) {
+                            cout << "Image sequence ended" << endl;
+                            running = false;
+                            break;
+                        }
+                        frameData.frameId++;
+                    }
                 }
             }
             
@@ -532,12 +588,38 @@ private:
             cvtColor(compressed, gray, COLOR_BGR2GRAY);
             gray.copyTo(frameData.grayCPU); // Сохраняем на CPU
             
-            // Пытаемся отправить в очередь для детекции/трекинга
-            if (!rawFramesQueue.push(move(frameData))) {
-                // Если очередь переполнена, пропускаем кадр
+            // Для видеофайлов используем неблокирующую push с повторными попытками
+            bool pushed = false;
+            int retryCount = 0;
+            const int MAX_RETRIES = 3;
+            
+            while (!pushed && retryCount < MAX_RETRIES && running) {
+                if (rawFramesQueue.push(move(frameData))) {
+                    pushed = true;
+                } else {
+                    // Очередь заполнена - ждем немного и пробуем снова
+                    retryCount++;
+                    this_thread::sleep_for(chrono::milliseconds(5));
+                    // Восстанавливаем frameData (оно было перемещено при неудачной попытке)
+                    if (retryCount < MAX_RETRIES && !pushed) {
+                        // Создаем новый FrameData для повторной попытки
+                        FrameData newData;
+                        newData.frameId = frameData.frameId;
+                        frameData.frameCPU.copyTo(newData.frameCPU);
+                        frameData.grayCPU.copyTo(newData.grayCPU);
+                        newData.timestamp = frameData.timestamp;
+                        frameData = move(newData);
+                    }
+                }
+            }
+            
+            if (!pushed) {
+                // Если после всех попыток не удалось добавить - пропускаем кадр
                 framesSkipped++;
-                // Освобождаем память кадра, который не удалось добавить
-                // (frameData будет автоматически уничтожен при выходе из области видимости)
+                if (framesSkipped % 30 == 0) { // Логируем каждые 30 пропущенных кадров
+                    cout << "Warning: Dropped frame " << frameData.frameId 
+                        << " (queue full). Total skipped: " << framesSkipped << endl;
+                }
             }
             
             frameCount++;
@@ -552,10 +634,14 @@ private:
             auto endTimeCap = chrono::steady_clock::now();
             auto durationCap = chrono::duration_cast<chrono::microseconds>(endTimeCap - startTimeCap);
             processingTimeCapture = (processingTimeCapture * 19.0 + durationCap.count() / 1000.0) / 20.0;
+            
+            // Обновляем время последнего кадра для управления задержкой
+            lastFrameTime = chrono::steady_clock::now();
         }
         
-        if (useCamera) cap.release();
-        cout << "Capture thread stopped" << endl;
+        if (cap.isOpened()) cap.release();
+        cout << "Capture thread stopped. Total frames captured: " << frameCount 
+            << ", Skipped: " << framesSkipped << endl;
     }
     
     // ========================= ПОТОК ДЕТЕКТИРОВАНИЯ И ОТСЛЕЖИВАНИЯ (ТОЛЬКО CPU) =========================
@@ -696,8 +782,8 @@ void detectionAndTrackingThread() {
                 }
             }
             
-            // Вычисляем сколько новых точек нужно добавить (максимум 5% от максимума)
-            int maxNewPoints = max(1, static_cast<int>(maxCornersConfig * 0.05));
+            // Вычисляем сколько новых точек нужно добавить (максимум 15% от максимума)
+            int maxNewPoints = max(1, static_cast<int>(maxCornersConfig * 0.15));
             int targetNewPoints = min(maxNewPoints, maxCornersConfig - static_cast<int>(frameData.points.size()));
             
             if (targetNewPoints > 0 && !keypoints.empty()) {
@@ -829,53 +915,63 @@ void detectionAndTrackingThread() {
                             Point2f pt = frameData.points[i];
                             Point scaledPt(static_cast<int>(pt.x * compressionConfig),
                                         static_cast<int>(pt.y * compressionConfig));
-                            circle(frameData.frameCPU, scaledPt, 2, colorRED, -1);
+                            circle(frameData.frameCPU, scaledPt, 10, colorRED, -1);
                         }
                     }
                     
+                    // ==== ТОЛЬКО ЗДЕСЬ ИСПОЛЬЗУЕМ GPU ====
                     // ==== здесь выполняем винеровскую фильтрацию
                     //UMat gFrame;
-                    if (kSwitch > 0.01)
+                    frameData.frameCPU.copyTo(frameData.frameGPU);
+                    if (framePart < 0.6)
                     {
                         UMat zeroMatH(cv::Size(a, b), CV_32F, Scalar(0)), complexH;
                         vector<UMat> gChannels(3), gChannelsWiener(3);
-                        frameData.frameCPU.copyTo(frameData.frameGPU);
                         double LEN, THETA;
-                        LEN = sqrt(frameData.transformFirstDerivative.dx * frameData.transformFirstDerivative.dx + 
-                            frameData.transformFirstDerivative.dy * frameData.transformFirstDerivative.dy);
-                        if (frameData.transformFirstDerivative.dx == 0.0)
-                            if (frameData.transformFirstDerivative.dy > 0.0)
-                                THETA = 90.0;
-                            else
-                                THETA = -90.0;
-                        else
-                            THETA = atan(frameData.transformFirstDerivative.dy / frameData.transformFirstDerivative.dx) * RAD_TO_DEG;
+                        // LEN = sqrt(frameData.transformFirstDerivative.dx * frameData.transformFirstDerivative.dx + 
+                        //     frameData.transformFirstDerivative.dy * frameData.transformFirstDerivative.dy);
 
-                        bilateralFilter(frameData.frameGPU, frameData.frameGPU, 3, 1.0, 1.0);
-                        frameData.frameGPU.convertTo(frameData.frameGPU, CV_32F);
-                        split(frameData.frameGPU, gChannels);
-
-                        GcalcPSF(gH, frameData.frameGPU.size(), cv::Size((int)LEN * 1 + 10, (int)LEN * 1 + 10), LEN, THETA);
+                        // if (frameData.transformFirstDerivative.dx == 0.0)
+                        //     if (frameData.transformFirstDerivative.dy > 0.0)
+                        //         THETA = 90.0;
+                        //     else
+                        //         THETA = -90.0;
+                        // else
+                        //     THETA = atan(frameData.transformFirstDerivative.dy / frameData.transformFirstDerivative.dx) * RAD_TO_DEG;
+                        
+                        LEN = 50.0;
+                        THETA = 50.0;
+                        
+                        UMat uFrame32F;
+                        Mat temp;
+                        uFrame32F.copyTo(temp);
+                        imshow("0", temp);
+                        frameData.frameGPU.convertTo(uFrame32F, CV_32F);
+                        uFrame32F.copyTo(temp);
+                        imshow("1", temp);
+                        split(uFrame32F, gChannels);
+                        gChannels[0].copyTo(temp);
+                        imshow("2", temp);
+                        GcalcPSF(gH, uFrame32F.size(), cv::Size((int)LEN * 1 + 10, (int)LEN * 1 + 10), LEN, THETA);
                         GcalcWnrFilter(gH, gHw, nsr);
 
                         // Объединяем действительную и мнимую часть фильтра в комплексную матрицу
                         vector<cv::UMat> planesH = { gHw, zeroMatH };
 
                         cv::merge(planesH, complexH);
-                        
                         for (unsigned short i = 0; i < 3; i++) //обработка трех цветных каналов можно разделить на три потока
                         {
                             Gfilter2DFreq(gChannels[i], gChannelsWiener[i], complexH);
                         }
                     
-                        cv::merge(gChannelsWiener, frameData.frameGPU);
-                        frameData.frameGPU.convertTo(frameData.frameGPU, CV_8UC3);
+                        cv::merge(gChannelsWiener, uFrame32F);
+                        uFrame32F.convertTo(frameData.frameGPU, CV_8UC3);
                         //cv::bilateralFilter(frameData.frameGPU, frameData.frameGPU, 3, 1.0, 1.0);
                     }
 
 
 
-                    // ==== ТОЛЬКО ЗДЕСЬ ИСПОЛЬЗУЕМ GPU ====
+
                     // Копируем кадр на GPU только для warpAffine
                     frameData.frameCPU.copyTo(frameData.frameGPU);
                     
@@ -1041,8 +1137,8 @@ void detectionAndTrackingThread() {
             }
             
             auto frameElapsed = chrono::duration_cast<chrono::milliseconds>(now - lastFrameTime);
-            if (frameElapsed.count() < 100) { // Ограничение до ~100 FPS
-                this_thread::sleep_for(chrono::milliseconds(33 - frameElapsed.count()));
+            if (frameElapsed.count() < 10) { // Ограничение до ~100 FPS
+                this_thread::sleep_for(chrono::milliseconds(10 - frameElapsed.count()));
             }
             lastFrameTime = now;
             
@@ -1346,10 +1442,12 @@ int main() {
     cout << "CPU cores available: " << cores << endl;
     
     cout << "Выберите режим работы:" << endl;
+    cout << "0. Использовать http:// камеру" << endl;
     cout << "1. Использовать камеру" << endl;
     cout << "2. Читать кадры из папки PXL_3" << endl;
     cout << "3. Читать кадры из папки PXL_4K" << endl;
-    cout << "Введите 1, 2 или 3: ";
+    cout << "4. Читать видео PXL_1 из PC" << endl;
+    cout << "Введите 0, 1, 2 или 3: ";
     
     int choice;
     cin >> choice;
@@ -1392,9 +1490,15 @@ int main() {
         if (videoSource.empty()) {
             videoSource = "http://192.168.0.103:4747/video?1000x1000";
         }
-    }
-    else {
-        cout << "Используется режим камеры по умолчанию:" << videoSource << endl;
+    } else if (choice == 4){
+        cout << "Используется режим чтения видео по умолчанию:" << videoSource << endl;
+        cin.ignore();
+        getline(cin, videoSource);
+        if (videoSource.empty()) {
+            videoSource = "/home/selbizo/CV/dataset/videos/PXL_1.mp4";
+        }
+    } else {
+        cout << "Используется режим камеры по умолчанию: " << "/home/pi/opencv_projects/videos/PXL_1.mp4" << endl;
         cin.ignore();
         getline(cin, videoSource);
         if (videoSource.empty()) {
