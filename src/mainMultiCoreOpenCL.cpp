@@ -58,7 +58,7 @@ const int itersConfig = 10;
 Mat Hw, h, gray_wiener;
 cv::UMat gHw, gH, gGrayWiener;
 
-bool wiener = false;
+bool wiener = true;
 bool threadwiener = false;
 double nsr = 0.01;
 double qWiener = 2.0; // скважность считывания кадра на камере (выдержка к частоте кадров) (умножена на 10)
@@ -81,9 +81,9 @@ cv::UMat gFrameWiener;
 string videoSource = "/home/pi/opencv_projects/videos/PXL_1.mp4";
 
 // ========================= НОВЫЕ КОНСТАНТЫ ДЛЯ УПРАВЛЕНИЯ ПАМЯТЬЮ =========================
-const int MAX_QUEUE_SIZE = 10;           // Максимальный размер очередей
-const int MAX_FRAME_BUFFER_SIZE = 15;    // Максимальный размер буфера кадров для отображения
-const int SKIP_FRAMES_THRESHOLD = 5;    // Сколько кадров пропускать при переполнении
+const int MAX_QUEUE_SIZE = 7;           // Максимальный размер очередей
+const int MAX_FRAME_BUFFER_SIZE = 10;    // Максимальный размер буфера кадров для отображения
+const int SKIP_FRAMES_THRESHOLD = 3;    // Сколько кадров пропускать при переполнении
 
 // ========================= СТРУКТУРЫ ДАННЫХ =========================
 
@@ -904,7 +904,7 @@ void detectionAndTrackingThread() {
                     
                     // Стабилизация (вычисление матрицы трансформации на CPU)
                     iirAdaptive(frameData.transformFirstDerivative, oldTransform, 
-                               frameData.transformSKO, frameData.stabMatrix, tauStab, roi, a, b, kSwitch);
+                            frameData.transformSKO, frameData.stabMatrix, tauStab, roi, a, b, kSwitch);
                     
                     frameData.transform = oldTransform;
                     
@@ -920,61 +920,112 @@ void detectionAndTrackingThread() {
                     }
                     
                     // ==== ТОЛЬКО ЗДЕСЬ ИСПОЛЬЗУЕМ GPU ====
-                    // ==== здесь выполняем винеровскую фильтрацию
-                    //UMat gFrame;
+                    // Копируем кадр на GPU
                     frameData.frameCPU.copyTo(frameData.frameGPU);
-                    if (framePart < 0.6)
+                    
+                    // ==== здесь выполняем винеровскую фильтрацию (только если включена) ====
+                    if (framePart < 0.6 && wiener)
                     {
                         UMat zeroMatH(cv::Size(a, b), CV_32F, Scalar(0)), complexH;
                         vector<UMat> gChannels(3), gChannelsWiener(3);
                         double LEN, THETA;
-                        // LEN = sqrt(frameData.transformFirstDerivative.dx * frameData.transformFirstDerivative.dx + 
-                        //     frameData.transformFirstDerivative.dy * frameData.transformFirstDerivative.dy);
+                        LEN = sqrt(frameData.transformFirstDerivative.dx * frameData.transformFirstDerivative.dx + 
+                            frameData.transformFirstDerivative.dy * frameData.transformFirstDerivative.dy);
 
-                        // if (frameData.transformFirstDerivative.dx == 0.0)
-                        //     if (frameData.transformFirstDerivative.dy > 0.0)
-                        //         THETA = 90.0;
-                        //     else
-                        //         THETA = -90.0;
-                        // else
-                        //     THETA = atan(frameData.transformFirstDerivative.dy / frameData.transformFirstDerivative.dx) * RAD_TO_DEG;
-                        
-                        LEN = 50.0;
-                        THETA = 50.0;
+                        if (frameData.transformFirstDerivative.dx == 0.0)
+                            if (frameData.transformFirstDerivative.dy > 0.0)
+                                THETA = 90.0;
+                            else
+                                THETA = -90.0;
+                        else
+                            THETA = atan(frameData.transformFirstDerivative.dy / frameData.transformFirstDerivative.dx) * RAD_TO_DEG;
                         
                         UMat uFrame32F;
-                        Mat temp;
-                        uFrame32F.copyTo(temp);
-                        imshow("0", temp);
                         frameData.frameGPU.convertTo(uFrame32F, CV_32F);
-                        uFrame32F.copyTo(temp);
-                        imshow("1", temp);
-                        split(uFrame32F, gChannels);
-                        gChannels[0].copyTo(temp);
-                        imshow("2", temp);
-                        GcalcPSF(gH, uFrame32F.size(), cv::Size((int)LEN * 1 + 10, (int)LEN * 1 + 10), LEN, THETA);
-                        GcalcWnrFilter(gH, gHw, nsr);
-
-                        // Объединяем действительную и мнимую часть фильтра в комплексную матрицу
-                        vector<cv::UMat> planesH = { gHw, zeroMatH };
-
-                        cv::merge(planesH, complexH);
-                        for (unsigned short i = 0; i < 3; i++) //обработка трех цветных каналов можно разделить на три потока
-                        {
-                            Gfilter2DFreq(gChannels[i], gChannelsWiener[i], complexH);
+                        
+                        if (uFrame32F.empty()) {
+                            cerr << "[Wiener ERROR] uFrame32F is empty!" << endl;
+                            continue;
                         }
-                    
+                        
+                        // PSF фильтр
+                        //Size psfSize = cv::Size((int)LEN * 1 + 10, (int)LEN * 1 + 10);
+                        Size psfSize = cv::Size(80, 80);
+                        GcalcPSF(gH, uFrame32F.size(), psfSize, LEN, THETA);
+                        
+                        if (gH.empty()) {
+                            cerr << "[Wiener ERROR] gH (PSF) is empty!" << endl;
+                            continue;
+                        }
+                        
+                        // Отображаем PSF (один раз для первого кадра)
+                        static bool psfDisplayed = true;
+                        if (!psfDisplayed) {
+                            Mat hCpuDisplay;
+                            gH.copyTo(hCpuDisplay);
+                            Mat hDisplay;
+                            normalize(hCpuDisplay, hDisplay, 0, 255, NORM_MINMAX);
+                            hDisplay.convertTo(hDisplay, CV_8U);
+                            imshow("Wiener_PSF_Filter", hDisplay);
+                            psfDisplayed = true;
+                        }
+                        
+                        // Вычисляем Wiener фильтр
+                        GcalcWnrFilter(gH, gHw, nsr);
+                        
+                        if (gHw.empty()) {
+                            cerr << "[Wiener ERROR] gHw is empty!" << endl;
+                            continue;
+                        }
+                        
+                        // Отображаем частотную характеристику (один раз)
+                        static bool wnrDisplayed = true;
+                        if (!wnrDisplayed) {
+                            Mat wnrCpuDisplay;
+                            gHw.copyTo(wnrCpuDisplay);
+                            Mat wnrDisplay;
+                            normalize(wnrCpuDisplay, wnrDisplay, 0, 255, NORM_MINMAX);
+                            wnrDisplay.convertTo(wnrDisplay, CV_8U);
+                            imshow("Wiener_Freq_Response", wnrDisplay);
+                            wnrDisplayed = true;
+                        }
+                        
+                        // Объединяем действительную и мнимую часть фильтра
+                        vector<cv::UMat> planesH = { gHw, zeroMatH };
+                        cv::merge(planesH, complexH);
+                        
+                        if (complexH.empty()) {
+                            cerr << "[Wiener ERROR] complexH is empty!" << endl;
+                            continue;
+                        }
+                        
+                        // Разделяем каналы
+                        split(uFrame32F, gChannels);
+                        
+                        // Обработка трех цветных каналов
+                        for (unsigned short i = 0; i < 3; i++) {
+                            if (!gChannels[i].empty()) {
+                                Gfilter2DFreq(gChannels[i], gChannelsWiener[i], complexH);
+                            }
+                        }
+                        
+                        // Объединяем обратно
                         cv::merge(gChannelsWiener, uFrame32F);
+                        
+                        if (uFrame32F.empty()) {
+                            cerr << "[Wiener ERROR] uFrame32F is empty after merge!" << endl;
+                            continue;
+                        }
+                        
+                        // Сохраняем результат обратно в frameGPU
                         uFrame32F.convertTo(frameData.frameGPU, CV_8UC3);
-                        //cv::bilateralFilter(frameData.frameGPU, frameData.frameGPU, 3, 1.0, 1.0);
+                        
+                        if (frameData.frameGPU.empty()) {
+                            cerr << "[Wiener ERROR] frameGPU is empty after Wiener!" << endl;
+                        }
                     }
-
-
-
-
-                    // Копируем кадр на GPU только для warpAffine
-                    frameData.frameCPU.copyTo(frameData.frameGPU);
                     
+                    // ==== СТАБИЛИЗАЦИЯ ====
                     UMat stabilizedFrame, croppedFrame;
                     warpAffine(frameData.frameGPU, stabilizedFrame, frameData.stabMatrix, frameSize, cv::INTER_CUBIC, cv::BORDER_REPLICATE);
                     croppedFrame = stabilizedFrame(roi);
@@ -993,7 +1044,6 @@ void detectionAndTrackingThread() {
                 
                 // Ограничиваем размер буфера
                 if (frameBuffer.size() >= MAX_FRAME_BUFFER_SIZE) {
-                    // Находим самый старый кадр и заменяем его
                     int oldestFrameId = frameBuffer.begin()->first;
                     frameBuffer.erase(oldestFrameId);
                 }
@@ -1018,9 +1068,6 @@ void detectionAndTrackingThread() {
             auto endTimeStab = chrono::steady_clock::now();
             auto durationStab = chrono::duration_cast<chrono::microseconds>(endTimeStab - startTimeStab);
             processingTimeStabilization = (processingTimeStabilization * 19.0 + durationStab.count() / 1000.0) / 20.0;
-            
-            // Небольшая задержка для снижения нагрузки на GPU
-            //this_thread::sleep_for(chrono::milliseconds(1));
         }
         
         cout << "Stabilization thread stopped. Stabilized " << framesStabilized << " frames total." << endl;
@@ -1311,18 +1358,18 @@ void detectionAndTrackingThread() {
         Mat hCpuBig(Size(psfSize.width * scale, psfSize.height * scale), CV_32F, Scalar(0));
         Point center(psfSize.width * scale / 2, psfSize.height * scale / 2);
 
-        Size axes(scale, cvRound(double(len * scale + scale) / 2.0f));
-        Size axes2(scale, cvRound(double(len * scale + scale) / 4.0f));
-        Size axes3(scale, cvRound(double(len * scale + scale) / 6.0f));
+        Size axes(scale, cvRound(double(len * scale + scale) * 0.5f));
+        Size axes2(scale, cvRound(double(len * scale + scale) * 0.45f));
+        Size axes3(scale, cvRound(double(len * scale + scale) * 0.3f));
         
         double angle = 90.0 - theta;
 
         
 
-        ellipse(hCpuBig, center, axes, angle, 0, 360, Scalar(0.2), FILLED);
+        ellipse(hCpuBig, center, axes, angle, 0, 360, Scalar(0.4), FILLED);
 
-        ellipse(hCpuBig, center, axes2, angle, 0, 360, Scalar(0.4), FILLED);
-        ellipse(hCpuBig, center, axes2, angle, 0, 360, Scalar(0.9), FILLED);
+        ellipse(hCpuBig, center, axes2, angle, 0, 360, Scalar(0.8), FILLED);
+        ellipse(hCpuBig, center, axes3, angle, 0, 360, Scalar(1.0), FILLED);
         resize(hCpuBig, hCpu, psfSize, INTER_LINEAR);
         if (hCpu.cols > h.cols / 2)
             resize(hCpu, hCpu, Size(h.cols / 2 - 1, hCpu.rows), INTER_LINEAR);
