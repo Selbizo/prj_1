@@ -61,10 +61,9 @@ cv::UMat gHw, gH, gGrayWiener;
 bool wiener = true;
 bool threadwiener = false;
 double nsr = 0.01;
-double qWiener = 2.0; // скважность считывания кадра на камере (выдержка к частоте кадров) (умножена на 10)
 double LEN = 0;
 double THETA = 0.0;
-
+double D = 0.2;
 
 double TRUE_LEN = 0;
 double TRUE_THETA = 0.0;
@@ -922,29 +921,23 @@ void detectionAndTrackingThread() {
                     
                     frameData.transform = oldTransform;
                     
-                    // Рисуем точки на CPU перед отправкой на GPU
-                    if (!frameData.points.empty()) {
+                    // Рисуем точки на CPU после получения с GPU
+                    if (!frameData.points.empty() && framePart > 0.7) {
                         int pointsToShow = min(300, static_cast<int>(frameData.points.size()));
                         for (int i = 0; i < pointsToShow; i++) {
                             Point2f pt = frameData.points[i];
                             Point scaledPt(static_cast<int>(pt.x * compressionConfig),
                                         static_cast<int>(pt.y * compressionConfig));
-                            circle(frameData.frameCPU, scaledPt, 10, colorRED, -1);
+                            circle(frameData.frameCPU, scaledPt, 6, colorRED, -1);
                         }
                     }
                     
                     // ==== ТОЛЬКО ЗДЕСЬ ИСПОЛЬЗУЕМ GPU ====
                     // Копируем кадр на GPU
                     frameData.frameCPU.copyTo(frameData.frameGPU);
-                    
-                    // ==== здесь выполняем винеровскую фильтрацию (только если включена) ====
-                    if (framePart < 0.6 && wiener)
-                    {
-                        UMat zeroMatH(cv::Size(a, b), CV_32F, Scalar(0)), complexH;
-                        vector<UMat> gChannels(3), gChannelsWiener(3);
-                        double LEN, THETA;
+                    double LEN, THETA;
                         LEN = sqrt(frameData.transformFirstDerivative.dx * frameData.transformFirstDerivative.dx + 
-                            frameData.transformFirstDerivative.dy * frameData.transformFirstDerivative.dy);
+                            frameData.transformFirstDerivative.dy * frameData.transformFirstDerivative.dy)*D;
 
                         if (frameData.transformFirstDerivative.dx == 0.0)
                             if (frameData.transformFirstDerivative.dy > 0.0)
@@ -953,10 +946,16 @@ void detectionAndTrackingThread() {
                                 THETA = -90.0;
                         else
                             THETA = atan(frameData.transformFirstDerivative.dy / frameData.transformFirstDerivative.dx) * RAD_TO_DEG;
+                    
+                    // ==== здесь выполняем винеровскую фильтрацию (только если включена) ====
+                    if (framePart < 0.65 && wiener && !wiener)
+                    {
+                        UMat zeroMatH(cv::Size(a, b), CV_32F, Scalar(0)), complexH;
+                        vector<UMat> gChannels(3), gChannelsWiener(3);
+
                         
                         UMat uFrame32F;
                         frameData.frameGPU.convertTo(uFrame32F, CV_32F);
-                        
                         if (uFrame32F.empty()) {
                             cerr << "[Wiener ERROR] uFrame32F is empty!" << endl;
                             continue;
@@ -964,7 +963,7 @@ void detectionAndTrackingThread() {
                         
                         // PSF фильтр
                         //Size psfSize = cv::Size((int)LEN * 1 + 10, (int)LEN * 1 + 10);
-                        Size psfSize = cv::Size(80, 80);
+                        Size psfSize = cv::Size(31, 31);
                         GcalcPSF(gH, uFrame32F.size(), psfSize, LEN, THETA);
                         
                         if (gH.empty()) {
@@ -1041,7 +1040,7 @@ void detectionAndTrackingThread() {
                     
                     // ==== СТАБИЛИЗАЦИЯ ====
                     UMat stabilizedFrame, croppedFrame;
-                    warpAffine(frameData.frameGPU, stabilizedFrame, frameData.stabMatrix, frameSize, cv::INTER_NEAREST, cv::BORDER_TRANSPARENT);
+                    warpAffine(frameData.frameGPU, stabilizedFrame, frameData.stabMatrix, frameSize, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
                     croppedFrame = stabilizedFrame(roi);
                     
                     // Копируем результат обратно на CPU для отображения
@@ -1165,10 +1164,10 @@ void detectionAndTrackingThread() {
             Mat displayFrame;
             resize(frameData.frameCPU, displayFrame, Size(a, b), INTER_AREA);
             
-            string infoText = format("FPS: %d | points: %d | tau: %2.1f | part: %1.2f | Skip: %d",
+            string infoText = format("FPS: %d | nsr: %1.2f | D: %1.2f | part: %1.2f | Skip: %d",
                                     fps.load(),
-                                    frameData.points.size(), 
-                                    tauStab, framePart, framesSkipped.load());
+                                    nsr, 
+                                    D, framePart, framesSkipped.load());
 
             string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %d / %d ",
                                     processingTimeCapture, processingTimeDetectionTracking, 
@@ -1236,6 +1235,22 @@ void detectionAndTrackingThread() {
                     roi.width = a * framePart;
                     roi.height = b * framePart;
                 }
+            } else if (key == 'u' || key == 'U') {
+                D = D + 0.01;
+                if (D > 1.0)
+                    D = 1.0;
+            } else if (key == 'i' || key == 'I') {
+                D = D - 0.01;
+                if (D < 0.0)
+                    D = 0.01;
+            } else if (key == 'j' || key == 'J') {
+                nsr = nsr*2;
+                if (nsr > 10.0)
+                    nsr = 10.0;
+            } else if (key == 'k' || key == 'K') {
+                nsr = nsr*0.5;
+                if (nsr < 0.01)
+                    nsr = 0.01;
             }
         }
         
@@ -1366,23 +1381,20 @@ void detectionAndTrackingThread() {
     //WITH OPENCL
     void GcalcPSF(cv::UMat& outputImg, Size filterSize, Size psfSize, double len, double theta)
     {
-        int scale = 8;
+        int scale = 4;
         cv::UMat h(filterSize, CV_32F, Scalar(0));
         Mat hCpu(psfSize, CV_32F, Scalar(0));
         Mat hCpuBig(Size(psfSize.width * scale, psfSize.height * scale), CV_32F, Scalar(0));
         Point center(psfSize.width * scale / 2, psfSize.height * scale / 2);
 
-        Size axes(scale, cvRound(double(len * scale + scale) * 0.5f));
-        Size axes2(scale, cvRound(double(len * scale + scale) * 0.45f));
-        Size axes3(scale, cvRound(double(len * scale + scale) * 0.3f));
+        Size axes(scale, cvRound(double(len * scale ) * 0.5f));
+        Size axes2(scale, cvRound(double(len * scale) * 0.45f));
+        Size axes3(scale, cvRound(double(len * scale) * 0.3f));
         
         double angle = 90.0 - theta;
 
-        
-
-        ellipse(hCpuBig, center, axes, angle, 0, 360, Scalar(0.4), FILLED);
-
-        ellipse(hCpuBig, center, axes2, angle, 0, 360, Scalar(0.8), FILLED);
+        ellipse(hCpuBig, center, axes, angle, 0, 360, Scalar(0.6), FILLED);
+        ellipse(hCpuBig, center, axes2, angle, 0, 360, Scalar(0.9), FILLED);
         ellipse(hCpuBig, center, axes3, angle, 0, 360, Scalar(1.0), FILLED);
         resize(hCpuBig, hCpu, psfSize, INTER_LINEAR);
         if (hCpu.cols > h.cols / 2)
@@ -1390,7 +1402,7 @@ void detectionAndTrackingThread() {
         if (hCpu.rows > h.rows / 2)
             resize(hCpu, hCpu, Size(hCpu.cols, h.rows / 2 - 1), INTER_LINEAR);
         
-        imshow("PSF Cpu", hCpu);
+        //imshow("PSF Cpu", hCpu);
         //hCpu(Rect(0, 0, psfSize.width, psfSize.height)).copyTo(h(Rect((filterSize.width - psfSize.width) / 2, (filterSize.height - psfSize.height) / 2, psfSize.width, psfSize.height)));
         hCpu(Rect(0, 0, hCpu.cols, hCpu.rows)).copyTo(h(Rect((filterSize.width - hCpu.cols) / 2, (filterSize.height - hCpu.rows) / 2, hCpu.cols, hCpu.rows)));
 
@@ -1545,11 +1557,11 @@ int main() {
         }
         cout << "Путь к кадрам: " << imageFolderPath << endl;
     } else if (choice == 0){
-        cout << "Используется режим http камеры по умолчанию:" << "http://192.168.0.103:4747/video?1000x1000" << endl;
+        cout << "Используется режим http камеры по умолчанию:" << "http://192.168.0.103:4747/video?500x500" << endl;
         cin.ignore();
         getline(cin, videoSource);
         if (videoSource.empty()) {
-            videoSource = "http://192.168.0.103:4747/video?1000x1000";
+            videoSource = "http://192.168.0.105:4747/video?500x500";
         }
     } else if (choice == 4){
         cout << "Используется режим чтения видео по умолчанию:" << videoSource << endl;
@@ -1576,6 +1588,8 @@ int main() {
     cout << "  F - сохранить текущий кадр" << endl;
     cout << "  D - переключить режим отладки" << endl;
     cout << "  S/W - увеличить/уменьшить область кадра" << endl;
+    cout << "  U/I - увеличить/уменьшить коэффициент заполнения" << endl;
+    cout << "  J/K - увеличить/уменьшить NSR" << endl;
     
     try {
         while (stabilizer.running) {
