@@ -24,6 +24,8 @@ namespace fs = filesystem;
 
 // ========================= КОНСТАНТЫ И КОНФИГУРАЦИЯ =========================
 const bool USE_OPENCL = true;
+const bool USE_FP16_WARP = true;  // Использовать FP16 для warpAffine на Mali GPU
+const bool DETECT_OPENCL_FP16 = true;  // Автоматически обнаружить поддержку FP16
 
 const double DEG_TO_RAD = CV_PI / 180.0;
 const double RAD_TO_DEG = 180.0 / CV_PI;
@@ -240,6 +242,97 @@ int getAvailableCores() {
     return sysconf(_SC_NPROCESSORS_ONLN);
 }
 
+// ========================= GPU ОПТИМИЗАЦИЯ (FP16 для Mali G52) =========================
+
+struct GPUCapabilities {
+    bool supportsFP16;
+    bool supportsHalfType;
+    string gpuName;
+    
+    GPUCapabilities() : supportsFP16(false), supportsHalfType(false) {}
+};
+
+// Проверить возможности GPU для FP16
+GPUCapabilities detectGPUCapabilities() {
+    GPUCapabilities caps;
+    
+    if (!ocl::haveOpenCL()) {
+        cerr << "[GPU] OpenCL не доступен" << endl;
+        return caps;
+    }
+    
+    ocl::Context context = ocl::Context::getDefault();
+    if (!context.ptr()) {
+        cerr << "[GPU] Не удалось получить OpenCL контекст" << endl;
+        return caps;
+    }
+    
+    const ocl::Device& device = ocl::Device::getDefault();
+    caps.gpuName = device.name();
+    cout << "[GPU] Найдено устройство: " << caps.gpuName << endl;
+    
+    // Проверить расширения для FP16
+    string extensions = device.extensions();
+    caps.supportsFP16 = (extensions.find("cl_khr_fp16") != string::npos);
+    
+    if (caps.supportsFP16) {
+        cout << "[GPU] ✓ FP16 поддерживается (cl_khr_fp16)" << endl;
+    } else {
+        cout << "[GPU] ✗ FP16 расширение не найдено" << endl;
+    }
+    
+    // ARM Mali может иметь встроенную поддержку half-типов
+    if (caps.gpuName.find("Mali") != string::npos) {
+        caps.supportsHalfType = true;
+        cout << "[GPU] ✓ Обнаружена Mali GPU - активирована FP16 поддержка" << endl;
+    }
+    
+    return caps;
+}
+
+// Быстрая warpAffine с FP16 (для Mali G52)
+void warpAffineOptimized(InputArray src, OutputArray dst, InputArray M, Size dsize,
+                         int flags = INTER_LINEAR, int borderMode = BORDER_CONSTANT,
+                         const Scalar& borderValue = Scalar(), bool useFP16 = false) {
+    if (!USE_FP16_WARP || !useFP16) {
+        // Стандартная версия
+        warpAffine(src, dst, M, dsize, flags, borderMode, borderValue);
+        return;
+    }
+    
+    // FP16 оптимизированная версия для Mali
+    try {
+        UMat src_umat = src.getUMat();
+        UMat src_fp16, result_fp16;
+        
+        // Конвертировать входной кадр в FP16
+        if (src.type() == CV_8UC3) {
+            UMat src_fp32;
+            src_umat.convertTo(src_fp32, CV_32F, 1.0 / 255.0);  // Нормализовать
+            src_fp32.convertTo(src_fp16, CV_16F);  // CV_16F = FP16
+        } else {
+            src_umat.convertTo(src_fp16, CV_16F);
+        }
+        
+        // Выполнить warpAffine в FP16
+        warpAffine(src_fp16, result_fp16, M, dsize, flags, borderMode);
+        
+        // Конвертировать обратно в требуемый формат
+        if (dst.type() == CV_8UC3 || dst.getMat().type() == CV_8UC3) {
+            UMat result_fp32;
+            result_fp16.convertTo(result_fp32, CV_32F);
+            result_fp32.convertTo(dst, CV_8U, 255.0);  // Денормализовать
+        } else {
+            result_fp16.convertTo(dst, CV_32F);
+        }
+        
+    } catch (const exception& e) {
+        // Fallback на стандартную версию при ошибке
+        cerr << "[GPU] Ошибка FP16 warpAffine, используется стандартная версия: " << e.what() << endl;
+        warpAffine(src, dst, M, dsize, flags, borderMode, borderValue);
+    }
+}
+
 // ========================= ОСНОВНЫЕ ФУНКЦИИ =========================
 
 class VideoStabilizer {
@@ -283,6 +376,9 @@ private:
     atomic<int> processingLag{0};
     const int MAX_PROCESSING_LAG = 3;  // Уменьшил с 6 до 3
     const int MAX_BUFFER_SIZE = MAX_FRAME_BUFFER_SIZE;
+    
+    // GPU оптимизация
+    bool useFP16Warp{false};  // Флаг для использования FP16 в warpAffine
     
     double processingTimeCapture;
     double processingTimeDetectionTracking;
@@ -345,6 +441,13 @@ public:
     
     ~VideoStabilizer() {
         stop();
+    }
+    
+    void setUseFP16(bool value) {
+        useFP16Warp = value;
+        if (value) {
+            cout << "[GPU] FP16 оптимизация активирована для warpAffine()" << endl;
+        }
     }
     
     void start(bool useCamera, const string& imageFolderPath = "") {
@@ -1040,7 +1143,8 @@ void detectionAndTrackingThread() {
                     
                     // ==== СТАБИЛИЗАЦИЯ ====
                     UMat stabilizedFrame, croppedFrame;
-                    warpAffine(frameData.frameGPU, stabilizedFrame, frameData.stabMatrix, frameSize, cv::INTER_LINEAR, cv::BORDER_CONSTANT);
+                    warpAffineOptimized(frameData.frameGPU, stabilizedFrame, frameData.stabMatrix, frameSize, 
+                                       cv::INTER_LINEAR, cv::BORDER_CONSTANT, Scalar(), useFP16Warp);
                     croppedFrame = stabilizedFrame(roi);
                     
                     // Копируем результат обратно на CPU для отображения
@@ -1514,6 +1618,15 @@ int main() {
     int cores = getAvailableCores();
     cout << "CPU cores available: " << cores << endl;
     
+    // Обнаружить возможности GPU
+    cout << "\n[ИНИЦИАЛИЗАЦИЯ GPU]" << endl;
+    GPUCapabilities gpuCaps = detectGPUCapabilities();
+    bool useFP16 = gpuCaps.supportsFP16 || gpuCaps.supportsHalfType;
+    if (!useFP16) {
+        cout << "[GPU] Предупреждение: FP16 недоступен, используется стандартная обработка" << endl;
+    }
+    cout << endl;
+    
     cout << "Выберите режим работы:" << endl;
     cout << "0. Использовать http:// камеру" << endl;
     cout << "1. Использовать камеру" << endl;
@@ -1580,6 +1693,7 @@ int main() {
     }
     
     VideoStabilizer stabilizer;
+    stabilizer.setUseFP16(useFP16);  // Установить флаг FP16 оптимизации
     stabilizer.start(useCamera, imageFolderPath);
     
     cout << endl << "Управление:" << endl;
@@ -1590,6 +1704,9 @@ int main() {
     cout << "  S/W - увеличить/уменьшить область кадра" << endl;
     cout << "  U/I - увеличить/уменьшить коэффициент заполнения" << endl;
     cout << "  J/K - увеличить/уменьшить NSR" << endl;
+    if (useFP16) {
+        cout << "\n[GPU] FP16 оптимизация активирована - быстрее, но возможна небольшая потеря качества" << endl;
+    }
     
     try {
         while (stabilizer.running) {
