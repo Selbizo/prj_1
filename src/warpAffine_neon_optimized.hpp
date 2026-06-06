@@ -125,10 +125,10 @@ private:
                 int tileWidth = min(TILE_SIZE, dstWidth - tileX);
                 int tileHeight = min(TILE_SIZE, dstHeight - tileY);
                 
-                // Обработка плитки
+                // Обработка плитки (используем bilинейную интерполяцию для качества)
                 processWarpAffineTile(src, dst, transform, 
                                     tileX, tileY, tileWidth, tileHeight,
-                                    srcWidth, srcHeight, borderMode, borderColor);
+                                    srcWidth, srcHeight, borderMode, borderColor, false);
             }
         }
     }
@@ -137,45 +137,74 @@ private:
                                      const TransformMatrixOptimized& transform,
                                      int tileX, int tileY, int tileWidth, int tileHeight,
                                      int srcWidth, int srcHeight,
-                                     int borderMode, const uint8_t* borderColor) {
+                                     int borderMode, const uint8_t* borderColor,
+                                     bool useNearest = false) {
         
         const uint8_t* srcPtr = src.ptr<uint8_t>();
         uint8_t* dstPtr = dst.ptr<uint8_t>();
         int srcStep = src.step;
         int dstStep = dst.step;
         
-        // Предварительное вычисление для первого пикселя плитки (для оптимизации)
-        float baseSrcX, baseSrcY;
-        transform.transform(static_cast<float>(tileX), static_cast<float>(tileY), baseSrcX, baseSrcY);
-        
-        // Обработка каждого пикселя в плитке с билинейной интерполяцией
-        for (int y = 0; y < tileHeight; y++) {
-            for (int x = 0; x < tileWidth; x++) {
-                
-                int dstX = tileX + x;
-                int dstY = tileY + y;
-                
-                // Вычисляем исходные координаты
-                float srcX, srcY;
-                transform.transform(static_cast<float>(dstX), 
-                                  static_cast<float>(dstY), srcX, srcY);
-                
-                // Проверка границ
-                if (srcX < 0 || srcX >= srcWidth - 1 || 
-                    srcY < 0 || srcY >= srcHeight - 1) {
+        if (useNearest) {
+            // Быстрая версия с nearest neighbor интерполяцией
+            for (int y = 0; y < tileHeight; y++) {
+                for (int x = 0; x < tileWidth; x++) {
                     
-                    if (borderMode == BORDER_CONSTANT) {
-                        uint8_t* dstPixel = dstPtr + dstY * dstStep + dstX * 3;
-                        dstPixel[0] = borderColor[0];
-                        dstPixel[1] = borderColor[1];
-                        dstPixel[2] = borderColor[2];
+                    int dstX = tileX + x;
+                    int dstY = tileY + y;
+                    
+                    float srcX, srcY;
+                    transform.transform(static_cast<float>(dstX), 
+                                      static_cast<float>(dstY), srcX, srcY);
+                    
+                    int srcXi = static_cast<int>(srcX + 0.5f);
+                    int srcYi = static_cast<int>(srcY + 0.5f);
+                    
+                    if (srcXi < 0 || srcXi >= srcWidth || 
+                        srcYi < 0 || srcYi >= srcHeight) {
+                        if (borderMode == BORDER_CONSTANT) {
+                            uint8_t* dstPixel = dstPtr + dstY * dstStep + dstX * 3;
+                            dstPixel[0] = borderColor[0];
+                            dstPixel[1] = borderColor[1];
+                            dstPixel[2] = borderColor[2];
+                        }
+                        continue;
                     }
-                    continue;
+                    
+                    const uint8_t* srcPixel = srcPtr + srcYi * srcStep + srcXi * 3;
+                    uint8_t* dstPixel = dstPtr + dstY * dstStep + dstX * 3;
+                    dstPixel[0] = srcPixel[0];
+                    dstPixel[1] = srcPixel[1];
+                    dstPixel[2] = srcPixel[2];
                 }
-                
-                // Билинейная интерполяция
-                interpolateBilinear8UC3(srcPtr, dstPtr, srcX, srcY, 
-                                       dstX, dstY, srcStep, dstStep);
+            }
+        } else {
+            // Версия с биливейной интерполяцией (выше по качеству)
+            for (int y = 0; y < tileHeight; y++) {
+                for (int x = 0; x < tileWidth; x++) {
+                    
+                    int dstX = tileX + x;
+                    int dstY = tileY + y;
+                    
+                    float srcX, srcY;
+                    transform.transform(static_cast<float>(dstX), 
+                                      static_cast<float>(dstY), srcX, srcY);
+                    
+                    if (srcX < 0 || srcX >= srcWidth - 1 || 
+                        srcY < 0 || srcY >= srcHeight - 1) {
+                        
+                        if (borderMode == BORDER_CONSTANT) {
+                            uint8_t* dstPixel = dstPtr + dstY * dstStep + dstX * 3;
+                            dstPixel[0] = borderColor[0];
+                            dstPixel[1] = borderColor[1];
+                            dstPixel[2] = borderColor[2];
+                        }
+                        continue;
+                    }
+                    
+                    interpolateBilinear8UC3(srcPtr, dstPtr, srcX, srcY, 
+                                           dstX, dstY, srcStep, dstStep);
+                }
             }
         }
     }
