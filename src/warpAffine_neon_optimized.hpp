@@ -102,8 +102,27 @@ private:
         dst.create(dsize, src.type());
         dst.setTo(borderValue);
         
-        // Конвертируем матрицу трансформации в оптимальный формат
-        TransformMatrixOptimized transform(M);
+        // КРИТИЧНО: warpAffine требует ИНВЕРСНУЮ матрицу трансформации!
+        // М переводит источник -> целевое пространство
+        // Нам нужна матрица: целевое -> источник (для интерполяции)
+        Mat M_inv = Mat::eye(2, 3, CV_64F);
+        
+        try {
+            Mat A = M(cv::Rect(0, 0, 2, 2)).clone();
+            Mat A_inv = A.inv();
+            Mat t = M(cv::Rect(2, 0, 1, 2)).clone();
+            Mat t_inv = -A_inv * t;
+            
+            A_inv.copyTo(M_inv(cv::Rect(0, 0, 2, 2)));
+            t_inv.copyTo(M_inv(cv::Rect(2, 0, 1, 2)));
+        } catch (...) {
+            // Если не удается инвертировать, используем стандартную версию
+            cv::warpAffine(src, dst, M, dsize, cv::INTER_LINEAR);
+            return;
+        }
+        
+        // Конвертируем ИНВЕРТИРОВАННУЮ матрицу в оптимальный формат
+        TransformMatrixOptimized transform(M_inv);
         
         // Граничные пиксели и значение для границы
         uint8_t borderColor[3] = {
