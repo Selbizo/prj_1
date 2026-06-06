@@ -639,7 +639,7 @@ private:
                 // Режим камеры - читаем в CPU Mat
                 bool frameRead = cap.read(frameData.frameCPU);
                 if (!frameRead || frameData.frameCPU.empty()) {
-                    cerr << "Failed to read frame from camera, reopening..." << endl;
+                    //cerr << "Failed to read frame from camera, reopening..." << endl;
                     cap.release();
                     cap.open(videoSource);
                     this_thread::sleep_for(chrono::milliseconds(10));
@@ -1051,7 +1051,7 @@ void detectionAndTrackingThread() {
                             THETA = atan(frameData.transformFirstDerivative.dy / frameData.transformFirstDerivative.dx) * RAD_TO_DEG;
                     
                     // ==== здесь выполняем винеровскую фильтрацию (только если включена) ====
-                    if (framePart < 0.65 && wiener && !wiener)
+                    if (framePart < 0.65 && wiener)
                     {
                         UMat zeroMatH(cv::Size(a, b), CV_32F, Scalar(0)), complexH;
                         vector<UMat> gChannels(3), gChannelsWiener(3);
@@ -1677,7 +1677,7 @@ int main() {
             videoSource = "http://192.168.0.105:4747/video?500x500";
         }
     } else if (choice == 4){
-        cout << "Используется режим чтения видео по умолчанию:" << videoSource << endl;
+        cout << "Используется режим чтения видео по умолчанию: /home/selbizo/CV/dataset/videos/PXL_1.mp4" << videoSource << endl;
         cin.ignore();
         getline(cin, videoSource);
         if (videoSource.empty()) {
