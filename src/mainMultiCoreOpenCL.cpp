@@ -18,14 +18,24 @@
 #include <pthread.h>
 #include <sched.h>
 #include <unistd.h>
+
+// Включаем оптимизированный warpAffine для ARM NEON
+#include "warpAffine_neon_optimized.hpp"
+
+// Включаем OpenMP для параллелизма
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 using namespace cv;
 using namespace std;
 namespace fs = filesystem;
 
 // ========================= КОНСТАНТЫ И КОНФИГУРАЦИЯ =========================
 const bool USE_OPENCL = true;
-const bool USE_FP16_WARP = true;  // Использовать FP16 для warpAffine на Mali GPU
-const bool DETECT_OPENCL_FP16 = true;  // Автоматически обнаружить поддержку FP16
+const bool USE_FP16_WARP = false;  // Отключаем FP16 в пользу NEON оптимизации
+const bool DETECT_OPENCL_FP16 = false;  // Отключаем автодетекцию FP16
+const bool USE_NEON_WARP_AFFINE = true;  // Включаем NEON оптимизацию warpAffine
 
 const double DEG_TO_RAD = CV_PI / 180.0;
 const double RAD_TO_DEG = 180.0 / CV_PI;
@@ -290,47 +300,25 @@ GPUCapabilities detectGPUCapabilities() {
     return caps;
 }
 
-// Быстрая warpAffine с FP16 (для Mali G52)
+// Быстрая warpAffine с NEON оптимизацией для Banana Pi (ARM Cortex-A53)
 void warpAffineOptimized(InputArray src, OutputArray dst, InputArray M, Size dsize,
                          int flags = INTER_LINEAR, int borderMode = BORDER_CONSTANT,
                          const Scalar& borderValue = Scalar(), bool useFP16 = false) {
-    if (!USE_FP16_WARP || !useFP16) {
-        // Стандартная версия
-        warpAffine(src, dst, M, dsize, flags, borderMode, borderValue);
-        return;
+    
+    // Используем NEON оптимизацию для основного пути
+    if (USE_NEON_WARP_AFFINE && src.type() == CV_8UC3 && dsize.width >= 256 && dsize.height >= 256) {
+        try {
+            // Для CPU обработки - используем NEON с tile-based processing
+            WarpAffineNeonOptimized::warpAffine(src, dst, M, dsize, flags, borderMode, borderValue, true);
+            return;
+        } catch (const exception& e) {
+            cerr << "[NEON] Error in warpAffine optimization: " << e.what() << endl;
+            // Fallback на стандартную версию
+        }
     }
     
-    // FP16 оптимизированная версия для Mali
-    try {
-        UMat src_umat = src.getUMat();
-        UMat src_fp16, result_fp16;
-        
-        // Конвертировать входной кадр в FP16
-        if (src.type() == CV_8UC3) {
-            UMat src_fp32;
-            src_umat.convertTo(src_fp32, CV_32F, 1.0 / 255.0);  // Нормализовать
-            src_fp32.convertTo(src_fp16, CV_16F);  // CV_16F = FP16
-        } else {
-            src_umat.convertTo(src_fp16, CV_16F);
-        }
-        
-        // Выполнить warpAffine в FP16
-        warpAffine(src_fp16, result_fp16, M, dsize, flags, borderMode);
-        
-        // Конвертировать обратно в требуемый формат
-        if (dst.type() == CV_8UC3 || dst.getMat().type() == CV_8UC3) {
-            UMat result_fp32;
-            result_fp16.convertTo(result_fp32, CV_32F);
-            result_fp32.convertTo(dst, CV_8U, 255.0);  // Денормализовать
-        } else {
-            result_fp16.convertTo(dst, CV_32F);
-        }
-        
-    } catch (const exception& e) {
-        // Fallback на стандартную версию при ошибке
-        cerr << "[GPU] Ошибка FP16 warpAffine, используется стандартная версия: " << e.what() << endl;
-        warpAffine(src, dst, M, dsize, flags, borderMode, borderValue);
-    }
+    // Стандартная версия для других случаев
+    warpAffine(src, dst, M, dsize, flags, borderMode, borderValue);
 }
 
 // ========================= ОСНОВНЫЕ ФУНКЦИИ =========================
@@ -445,7 +433,12 @@ public:
     
     void setUseFP16(bool value) {
         useFP16Warp = value;
-        if (value) {
+        if (USE_NEON_WARP_AFFINE) {
+            cout << "[NEON] NEON tile-based warpAffine оптимизация активирована для ARM Cortex-A53" << endl;
+            #ifdef _OPENMP
+            cout << "[OpenMP] Параллелизм включен на " << omp_get_num_procs() << " ядрах" << endl;
+            #endif
+        } else if (value) {
             cout << "[GPU] FP16 оптимизация активирована для warpAffine()" << endl;
         }
     }
@@ -1273,7 +1266,7 @@ void detectionAndTrackingThread() {
                                     nsr, 
                                     D, framePart, framesSkipped.load());
 
-            string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %d / %d ",
+            string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / %ld ",
                                     processingTimeCapture, processingTimeDetectionTracking, 
                                     processingTimeStabilization,
                                     rawFramesQueue.size(), processedFramesQueue.size());
@@ -1610,6 +1603,8 @@ void detectionAndTrackingThread() {
 // ========================= ОСНОВНАЯ ФУНКЦИЯ =========================
 
 int main() {
+
+    cout << cv::getBuildInformation() << std::endl;
     cout << "========================================" << endl;
     cout << " MULTI-THREADED VIDEO STABILIZER OPENCL " << endl;
     cout << "========================================" << endl;
