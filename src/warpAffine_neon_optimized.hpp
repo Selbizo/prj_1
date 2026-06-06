@@ -4,6 +4,7 @@
 #include <thread>
 #include <vector>
 #include <cstring>
+#include <iostream>
 
 #ifdef __ARM_NEON
 #include <arm_neon.h>
@@ -26,34 +27,35 @@ class WarpAffineNeonOptimized {
 private:
     static constexpr int TILE_SIZE = 64;  // Размер плитки для лучшего кэширования
     static constexpr int NEON_LANES = 4;  // 4 пикселя одновременно для float32
+    static constexpr bool DEBUG_TRANSFORM = false;  // Установить в true для отладки
     
     // Структура для хранения трансформации в оптимальной форме
-    struct TransformMatrixOptimized {
-        float m00, m01, m02;
-        float m10, m11, m12;
+     struct TransformMatrixOptimized {
+        double m00, m01, m02;
+        double m10, m11, m12;
         
         TransformMatrixOptimized() = default;
         
         TransformMatrixOptimized(const Mat& M) {
             if (M.type() == CV_64F) {
-                m00 = static_cast<float>(M.at<double>(0, 0));
-                m01 = static_cast<float>(M.at<double>(0, 1));
-                m02 = static_cast<float>(M.at<double>(0, 2));
-                m10 = static_cast<float>(M.at<double>(1, 0));
-                m11 = static_cast<float>(M.at<double>(1, 1));
-                m12 = static_cast<float>(M.at<double>(1, 2));
+                m00 = M.at<double>(0, 0);
+                m01 = M.at<double>(0, 1);
+                m02 = M.at<double>(0, 2);
+                m10 = M.at<double>(1, 0);
+                m11 = M.at<double>(1, 1);
+                m12 = M.at<double>(1, 2);
             } else {
-                m00 = M.at<float>(0, 0);
-                m01 = M.at<float>(0, 1);
-                m02 = M.at<float>(0, 2);
-                m10 = M.at<float>(1, 0);
-                m11 = M.at<float>(1, 1);
-                m12 = M.at<float>(1, 2);
+                m00 = static_cast<double>(M.at<float>(0, 0));
+                m01 = static_cast<double>(M.at<float>(0, 1));
+                m02 = static_cast<double>(M.at<float>(0, 2));
+                m10 = static_cast<double>(M.at<float>(1, 0));
+                m11 = static_cast<double>(M.at<float>(1, 1));
+                m12 = static_cast<double>(M.at<float>(1, 2));
             }
         }
         
         // Inline функция для вычисления трансформированных координат
-        inline void transform(float x, float y, float& dst_x, float& dst_y) const {
+        inline void transform(double x, double y, double& dst_x, double& dst_y) const {
             dst_x = m00 * x + m01 * y + m02;
             dst_y = m10 * x + m11 * y + m12;
         }
@@ -107,6 +109,10 @@ private:
         // Нам нужна матрица: целевое -> источник (для интерполяции)
         Mat M_inv = Mat::eye(2, 3, CV_64F);
         
+        if (DEBUG_TRANSFORM) {
+            std::cerr << "[NEON] Original matrix M:" << std::endl << M << std::endl;
+        }
+        
         try {
             Mat A = M(cv::Rect(0, 0, 2, 2)).clone();
             Mat A_inv = A.inv();
@@ -115,8 +121,15 @@ private:
             
             A_inv.copyTo(M_inv(cv::Rect(0, 0, 2, 2)));
             t_inv.copyTo(M_inv(cv::Rect(2, 0, 1, 2)));
+            
+            if (DEBUG_TRANSFORM) {
+                std::cerr << "[NEON] Inverted matrix M_inv:" << std::endl << M_inv << std::endl;
+            }
         } catch (...) {
             // Если не удается инвертировать, используем стандартную версию
+            if (DEBUG_TRANSFORM) {
+                std::cerr << "[NEON] Matrix inversion failed, using standard warpAffine" << std::endl;
+            }
             cv::warpAffine(src, dst, M, dsize, cv::INTER_LINEAR);
             return;
         }
@@ -172,12 +185,12 @@ private:
                     int dstX = tileX + x;
                     int dstY = tileY + y;
                     
-                    float srcX, srcY;
-                    transform.transform(static_cast<float>(dstX), 
-                                      static_cast<float>(dstY), srcX, srcY);
+                    double srcX, srcY;
+                    transform.transform(static_cast<double>(dstX), 
+                                      static_cast<double>(dstY), srcX, srcY);
                     
-                    int srcXi = static_cast<int>(srcX + 0.5f);
-                    int srcYi = static_cast<int>(srcY + 0.5f);
+                    int srcXi = static_cast<int>(srcX + 0.5);
+                    int srcYi = static_cast<int>(srcY + 0.5);
                     
                     if (srcXi < 0 || srcXi >= srcWidth || 
                         srcYi < 0 || srcYi >= srcHeight) {
@@ -205,9 +218,9 @@ private:
                     int dstX = tileX + x;
                     int dstY = tileY + y;
                     
-                    float srcX, srcY;
-                    transform.transform(static_cast<float>(dstX), 
-                                      static_cast<float>(dstY), srcX, srcY);
+                    double srcX, srcY;
+                    transform.transform(static_cast<double>(dstX), 
+                                      static_cast<double>(dstY), srcX, srcY);
                     
                     if (srcX < 0 || srcX >= srcWidth - 1 || 
                         srcY < 0 || srcY >= srcHeight - 1) {
@@ -230,23 +243,23 @@ private:
     
     // Оптимизированная билинейная интерполяция для uint8 RGB
     static inline void interpolateBilinear8UC3(const uint8_t* srcPtr, uint8_t* dstPtr,
-                                              float srcX, float srcY,
+                                              double srcX, double srcY,
                                               int dstX, int dstY,
                                               int srcStep, int dstStep) {
         
         int x0 = static_cast<int>(srcX);
         int y0 = static_cast<int>(srcY);
         
-        float fx = srcX - x0;
-        float fy = srcY - y0;
-        float fx1 = 1.0f - fx;
-        float fy1 = 1.0f - fy;
+        double fx = srcX - x0;
+        double fy = srcY - y0;
+        double fx1 = 1.0 - fx;
+        double fy1 = 1.0 - fy;
         
         // Коэффициенты интерполяции
-        float w00 = fx1 * fy1;
-        float w10 = fx * fy1;
-        float w01 = fx1 * fy;
-        float w11 = fx * fy;
+        double w00 = fx1 * fy1;
+        double w10 = fx * fy1;
+        double w01 = fx1 * fy;
+        double w11 = fx * fy;
         
         // Получаем 4 соседних пикселя
         const uint8_t* p00 = srcPtr + y0 * srcStep + x0 * 3;
@@ -256,11 +269,11 @@ private:
         
         // Интерполяция для каждого канала (RGB)
         for (int c = 0; c < 3; c++) {
-            float val = w00 * p00[c] + w10 * p10[c] + 
+            double val = w00 * p00[c] + w10 * p10[c] + 
                        w01 * p01[c] + w11 * p11[c];
             
             uint8_t* dstPixel = dstPtr + dstY * dstStep + dstX * 3 + c;
-            *dstPixel = static_cast<uint8_t>(val + 0.5f);
+            *dstPixel = static_cast<uint8_t>(val + 0.5);
         }
     }
     
