@@ -45,6 +45,7 @@ bool threadwiener = false;
 double framePart = 0.7;
 Rect roi;
 int frameWidth = 0, frameHeight = 0;
+int a = 0, b = 0;
 
 // Глобальные OpenCL переменные для Винеровского фильтра
 cv::UMat gHw(cv::Size(0, 0), CV_32F, cv::Scalar(0));
@@ -58,7 +59,6 @@ VideoStabilizer::VideoStabilizer()
       running(false),
       tauStab(TAU_STAB_MAX / 4),
       kSwitch(0.1),
-      framePart(framePart),
       trackedPoints(0),
       framesProcessed(0),
       framesSkipped(0),
@@ -207,10 +207,18 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
     frameWidth = frameSize.width;
     frameHeight = frameSize.height;
     
-    roi.x = static_cast<int>(frameWidth * ((1.0 - framePart) / 2.0));
-    roi.y = static_cast<int>(frameHeight * ((1.0 - framePart) / 2.0));
-    roi.width = static_cast<int>(frameWidth * framePart);
-    roi.height = static_cast<int>(frameHeight * framePart);
+    a = frameSize.width;
+    b = frameSize.height;
+    
+    // Используем глобальную framePart — член класса ещё не инициализирован в потоке
+    double fp = ::framePart;
+    
+    roi.x = static_cast<int>(frameWidth * ((1.0 - fp) / 2.0));
+    roi.y = static_cast<int>(frameHeight * ((1.0 - fp) / 2.0));
+    roi.width = static_cast<int>(frameWidth * fp);
+    roi.height = static_cast<int>(frameHeight * fp);
+    
+    cout << "[CAP] ROI: x=" << roi.x << " y=" << roi.y << " w=" << roi.width << " h=" << roi.height << endl;
     
     roi.x = max(0, min(roi.x, frameWidth - roi.width));
     roi.y = max(0, min(roi.y, frameHeight - roi.height));
@@ -571,7 +579,6 @@ void VideoStabilizer::detectionAndTrackingThread() {
 void VideoStabilizer::stabilizationThread() {
     cv::ocl::setUseOpenCL(USE_OPENCL);
     cout << "[STAB] === Stabilization thread started (GPU enabled) ===" << endl;
-    cout << "[STAB] OpenCL device: " << cv::ocl::Device::getDefault().name() << endl;
     
     int framesStabilized = 0;
     int framesSkippedWiener = 0;
@@ -599,11 +606,11 @@ void VideoStabilizer::stabilizationThread() {
                 framesStabilized++;
                 
                 iirAdaptive(frameData.transformFirstDerivative, oldTransform,
-                            frameData.transformSKO, frameData.stabMatrix, tauStab, roi, frameWidth, frameHeight, kSwitch);
+                            frameData.transformSKO, frameData.stabMatrix, tauStab, roi, a, b, kSwitch);
                 frameData.transform = oldTransform;
                 
                 // Рисуем точки на CPU
-                if (!frameData.points.empty() && framePart > 0.7) {
+                if (!frameData.points.empty() && ::framePart > 0.7) {
                     int pointsToShow = min(300, static_cast<int>(frameData.points.size()));
                     for (int i = 0; i < pointsToShow; i++) {
                         Point2f pt = frameData.points[i];
@@ -624,87 +631,106 @@ void VideoStabilizer::stabilizationThread() {
                 else
                     THETA = atan(frameData.transformFirstDerivative.dy / frameData.transformFirstDerivative.dx) * RAD_TO_DEG;
                 
-                // Винеровская фильтрация (исправлено: используем флаг вместо continue)
-                bool wienerSuccess = true;
-                if (framePart < 0.65 && wiener) {
+                // ==== Винеровская фильтрация (оригинальное условие: framePart < 0.65 && wiener && !wiener — всегда false) ====
+                if (::framePart < 0.65 && wiener && !wiener)
+                {
                     UMat zeroMatH(cv::Size(frameWidth, frameHeight), CV_32F, Scalar(0)), complexH;
-                    vector<cv::UMat> gChannels(3), gChannelsWiener(3);
+                    vector<UMat> gChannels(3), gChannelsWiener(3);
 
+                    
                     UMat uFrame32F;
                     frameData.frameGPU.convertTo(uFrame32F, CV_32F);
                     if (uFrame32F.empty()) {
-                        cerr << "[STAB-Wiener] ERROR: uFrame32F is empty!" << endl;
-                        wienerSuccess = false;
+                        cerr << "[Wiener ERROR] uFrame32F is empty!" << endl;
+                        continue;
                     }
                     
-                    if (wienerSuccess) {
-                        Size psfSize(31, 31);
-                        GcalcPSF(gHw, uFrame32F.size(), psfSize, LEN, THETA);
-                        
-                        if (gHw.empty()) {
-                            cerr << "[STAB-Wiener] ERROR: gHw (PSF) is empty!" << endl;
-                            wienerSuccess = false;
+                    // PSF фильтр
+                    //Size psfSize = cv::Size((int)LEN * 1 + 10, (int)LEN * 1 + 10);
+                    Size psfSize = cv::Size(31, 31);
+                    GcalcPSF(gH, uFrame32F.size(), psfSize, LEN, THETA);
+                    
+                    if (gH.empty()) {
+                        cerr << "[Wiener ERROR] gH (PSF) is empty!" << endl;
+                        continue;
+                    }
+                    
+                    // Отображаем PSF (один раз для первого кадра)
+                    static bool psfDisplayed = true;
+                    if (!psfDisplayed) {
+                        Mat hCpuDisplay;
+                        gH.copyTo(hCpuDisplay);
+                        Mat hDisplay;
+                        normalize(hCpuDisplay, hDisplay, 0, 255, NORM_MINMAX);
+                        hDisplay.convertTo(hDisplay, CV_8U);
+                        imshow("Wiener_PSF_Filter", hDisplay);
+                        psfDisplayed = true;
+                    }
+                    
+                    // Вычисляем Wiener фильтр
+                    GcalcWnrFilter(gH, gHw, nsr);
+                    
+                    if (gHw.empty()) {
+                        cerr << "[Wiener ERROR] gHw is empty!" << endl;
+                        continue;
+                    }
+                    
+                    // Отображаем частотную характеристику (один раз)
+                    static bool wnrDisplayed = true;
+                    if (!wnrDisplayed) {
+                        Mat wnrCpuDisplay;
+                        gHw.copyTo(wnrCpuDisplay);
+                        Mat wnrDisplay;
+                        normalize(wnrCpuDisplay, wnrDisplay, 0, 255, NORM_MINMAX);
+                        wnrDisplay.convertTo(wnrDisplay, CV_8U);
+                        imshow("Wiener_Freq_Response", wnrDisplay);
+                        wnrDisplayed = true;
+                    }
+                    
+                    // Объединяем действительную и мнимую часть фильтра
+                    vector<cv::UMat> planesH = { gHw, zeroMatH };
+                    cv::merge(planesH, complexH);
+                    
+                    if (complexH.empty()) {
+                        cerr << "[Wiener ERROR] complexH is empty!" << endl;
+                        continue;
+                    }
+                    
+                    // Разделяем каналы
+                    split(uFrame32F, gChannels);
+                    
+                    // Обработка трех цветных каналов
+                    for (unsigned short i = 0; i < 3; i++) {
+                        if (!gChannels[i].empty()) {
+                            Gfilter2DFreq(gChannels[i], gChannelsWiener[i], complexH);
                         }
                     }
                     
-                    if (wienerSuccess) {
-                        GcalcWnrFilter(gHw, gHw, nsr);
-                        
-                        if (gHw.empty()) {
-                            cerr << "[STAB-Wiener] ERROR: gHw is empty after filter!" << endl;
-                            wienerSuccess = false;
-                        }
+                    // Объединяем обратно
+                    cv::merge(gChannelsWiener, uFrame32F);
+                    
+                    if (uFrame32F.empty()) {
+                        cerr << "[Wiener ERROR] uFrame32F is empty after merge!" << endl;
+                        continue;
                     }
                     
-                    if (wienerSuccess) {
-                        vector<cv::UMat> planesH = { gHw, zeroMatH };
-                        cv::merge(planesH, complexH);
-                        
-                        if (complexH.empty()) {
-                            cerr << "[STAB-Wiener] ERROR: complexH is empty!" << endl;
-                            wienerSuccess = false;
-                        }
-                    }
+                    // Сохраняем результат обратно в frameGPU
+                    uFrame32F.convertTo(frameData.frameGPU, CV_8UC3);
                     
-                    if (wienerSuccess) {
-                        split(uFrame32F, gChannels);
-                        
-                        for (unsigned short i = 0; i < 3; i++) {
-                            if (!gChannels[i].empty()) {
-                                Gfilter2DFreq(gChannels[i], gChannelsWiener[i], complexH);
-                            }
-                        }
-                        
-                        cv::merge(gChannelsWiener, uFrame32F);
-                        
-                        if (uFrame32F.empty()) {
-                            cerr << "[STAB-Wiener] ERROR: uFrame32F is empty after merge!" << endl;
-                            wienerSuccess = false;
-                        } else {
-                            uFrame32F.convertTo(frameData.frameGPU, CV_8UC3);
-                            if (frameData.frameGPU.empty()) {
-                                cerr << "[STAB-Wiener] ERROR: frameGPU is empty after Wiener!" << endl;
-                                wienerSuccess = false;
-                            }
-                        }
-                    }
-                    
-                    if (wienerSuccess) {
-                        cout << "[STAB-Wiener] Wiener filter applied successfully (frame " << frameData.frameId << ")" << endl;
-                    } else {
-                        framesSkippedWiener++;
-                        cout << "[STAB-Wiener] Wiener filter FAILED (frame " << frameData.frameId 
-                             << "), skipping Wiener, using raw frame. Total failures: " << framesSkippedWiener << endl;
+                    if (frameData.frameGPU.empty()) {
+                        cerr << "[Wiener ERROR] frameGPU is empty after Wiener!" << endl;
                     }
                 }
                 
-                // Стабилизация (всегда выполняется, даже если Wiener не сработал)
+                // Стабилизация (всегда выполняется)
                 UMat stabilizedFrame, croppedFrame;
-                warpAffineOptimized(frameData.frameGPU, stabilizedFrame, frameData.stabMatrix, frameSize,
+                warpAffineOptimized(frameData.frameGPU, stabilizedFrame, frameData.stabMatrix, frameSize, 
                                    cv::INTER_LINEAR, cv::BORDER_CONSTANT, Scalar(), useFP16Warp);
                 croppedFrame = stabilizedFrame(roi);
                 
+                // Копируем результат обратно на CPU для отображения
                 croppedFrame.copyTo(frameData.frameCPU);
+                // ====================================
                 
                 cout << "[STAB] Frame " << frameData.frameId 
                      << " stabilized | Points: " << frameData.points.size()
@@ -843,7 +869,7 @@ void VideoStabilizer::displayThread() {
         resize(frameData.frameCPU, displayFrame, Size(frameWidth, frameHeight), INTER_AREA);
         
         string infoText = format("FPS: %d | nsr: %1.2f | D: %1.2f | part: %1.2f | Skip: %d",
-                                fps.load(), nsr, D, framePart, framesSkipped.load());
+                                fps.load(), nsr, D, ::framePart, framesSkipped.load());
 
 string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / %ld ",
                                     processingTimeCapture, processingTimeDetectionTracking, 
@@ -868,27 +894,7 @@ string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / 
                FONT_HERSHEY_SIMPLEX, 0.5 * frameWidth / 800, colorBLUE, 2 * frameWidth / 800);
         
         imshow(windowName, displayFrame);
-        
-        auto endTimeDisp = chrono::steady_clock::now();
-        auto durationDisp = chrono::duration_cast<chrono::microseconds>(endTimeDisp - startTimeDisp);
-        processingTimeImshow = (processingTimeImshow * 19.0 + durationDisp.count() / 1000.0) / 20.0;
 
-        if (recordEnable && writer.isOpened()) {
-            writer.write(displayFrame);
-        }
-        
-        auto now = chrono::steady_clock::now();
-        auto elapsed = chrono::duration_cast<chrono::milliseconds>(now - lastDisplayTime);
-        if (elapsed.count() >= 1000) {
-            displayedFrames = 0;
-            lastDisplayTime = now;
-        }
-        
-        auto frameElapsed = chrono::duration_cast<chrono::milliseconds>(now - lastFrameTime);
-        if (frameElapsed.count() < 10) {
-            this_thread::sleep_for(chrono::milliseconds(10 - frameElapsed.count()));
-        }
-        lastFrameTime = now;
         
         int key = waitKey(1);
         if (key == 27 || key == 'q') {
@@ -906,35 +912,39 @@ string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / 
             debugMode = !debugMode;
             cout << "Debug mode: " << (debugMode ? "ON" : "OFF") << endl;
         } else if (key == 's' || key == 'S') {
-            if (framePart < 0.95) {
-                framePart *= 1.01;
-                if (framePart > 0.9) framePart = 0.9;
-                roi.x = frameWidth * ((1.0 - framePart) / 2.0);
-                roi.y = frameHeight * ((1.0 - framePart) / 2.0);
-                roi.width = frameWidth * framePart;
-                roi.height = frameHeight * framePart;
+            if (::framePart < 0.95) {
+                ::framePart *= 1.01;
+                if (::framePart > 0.9) ::framePart = 0.9;
+                roi.x = frameWidth * ((1.0 - ::framePart) / 2.0);
+                roi.y = frameHeight * ((1.0 - ::framePart) / 2.0);
+                roi.width = frameWidth * ::framePart;
+                roi.height = frameHeight * ::framePart;
             }
         } else if (key == 'w' || key == 'W') {
-            if (framePart > 0.2) {
-                framePart *= 0.99;
-                if (framePart < 0.05) framePart = 0.05;
-                roi.x = frameWidth * ((1.0 - framePart) / 2.0);
-                roi.y = frameHeight * ((1.0 - framePart) / 2.0);
-                roi.width = frameWidth * framePart;
-                roi.height = frameHeight * framePart;
+            if (::framePart > 0.2) {
+                ::framePart *= 0.99;
+                if (::framePart < 0.05) ::framePart = 0.05;
+                roi.x = frameWidth * ((1.0 - ::framePart) / 2.0);
+                roi.y = frameHeight * ((1.0 - ::framePart) / 2.0);
+                roi.width = frameWidth * ::framePart;
+                roi.height = frameHeight * ::framePart;
             }
         } else if (key == 'u' || key == 'U') {
-            D += 0.01;
-            if (D > 1.0) D = 1.0;
+            D = D + 0.01;
+            if (D > 1.0)
+                D = 1.0;
         } else if (key == 'i' || key == 'I') {
-            D -= 0.01;
-            if (D < 0.0) D = 0.01;
+            D = D - 0.01;
+            if (D < 0.0)
+                D = 0.01;
         } else if (key == 'j' || key == 'J') {
-            nsr *= 2;
-            if (nsr > 10.0) nsr = 10.0;
+            nsr = nsr*2;
+            if (nsr > 10.0)
+                nsr = 10.0;
         } else if (key == 'k' || key == 'K') {
-            nsr *= 0.5;
-            if (nsr < 0.01) nsr = 0.01;
+            nsr = nsr*0.5;
+            if (nsr < 0.01)
+                nsr = 0.01;
         }
     }
     

@@ -37,7 +37,6 @@ private:
     // Параметры стабилизации
     double tauStab;
     double kSwitch;
-    double framePart;
     TransformParam oldTransform;
     cv::Rect roi;
     cv::Size frameSize;

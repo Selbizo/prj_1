@@ -55,7 +55,7 @@ if(TEST_CODE)
     message(STATUS "=== BUILDING TEST PROGRAM (sandbox/mainTest.cpp) ===")
     target_link_libraries(myapp_test ${OpenCV_LIBS} Threads::Threads)
 
-elseif(WITH_MULTICORE AND WITH_OPENCL AND IS_MODULAR)
+elseif(IS_MODULAR)
     # 2) Модульная версия на основе src/main.cpp
     add_executable(myapp_modular 
         main.cpp

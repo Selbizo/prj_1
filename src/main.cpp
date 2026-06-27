@@ -18,38 +18,16 @@ int main() {
     cout << " MULTI-THREADED VIDEO STABILIZER OPENCL " << endl;
     cout << "========================================" << endl;
     
+    cv::ocl::setUseOpenCL(USE_OPENCL);
     int cores = getAvailableCores();
     cout << "CPU cores available: " << cores << endl;
     
-    // ПРОВЕРКА OpenCL ДО любых GPU-операций
-    bool openCLAvailable = cv::ocl::haveOpenCL();
-    cout << "\n[OpenCL] haveOpenCL(): " << (openCLAvailable ? "ДА" : "НЕТ") << endl;
-    
-    if (!openCLAvailable) {
-        cout << "[OpenCL] ВНИМАНИЕ: OpenCV собран БЕЗ поддержки OpenCL!" << endl;
-        cout << "[OpenCL] Все операции будут выполняться на CPU (медленнее)" << endl;
-        cout << "[OpenCL] Для включения OpenCL пересоберите OpenCV с -DWITH_OPENCL=ON" << endl;
-    }
-    
-    // Обнаружить возможности GPU (ТОЛЬКО если OpenCL доступен)
-    GPUCapabilities gpuCaps;
-    bool useFP16 = false;
-    if (openCLAvailable) {
-        cout << "\n[ИНИЦИАЛИЗАЦИЯ GPU]" << endl;
-        gpuCaps = detectGPUCapabilities();
-        useFP16 = gpuCaps.supportsFP16 || gpuCaps.supportsHalfType;
-        if (!useFP16) {
-            cout << "[GPU] Предупреждение: FP16 недоступен, используется стандартная обработка" << endl;
-        }
-        
-        // Включаем OpenCL ТОЛЬКО если он доступен
-        cv::ocl::setUseOpenCL(true);
-        cout << "[OpenCL] OpenCL активирован" << endl;
-        cout << "[OpenCL] Текущее устройство: " << cv::ocl::Device::getDefault().name() << endl;
-    } else {
-        // OpenCL недоступен - отключаем
-        cv::ocl::setUseOpenCL(false);
-        cout << "[OpenCL] OpenCL отключён (недоступен)" << endl;
+    // Обнаружить возможности GPU
+    cout << "\n[ИНИЦИАЛИЗАЦИЯ GPU]" << endl;
+    GPUCapabilities gpuCaps = detectGPUCapabilities();
+    bool useFP16 = gpuCaps.supportsFP16 || gpuCaps.supportsHalfType;
+    if (!useFP16) {
+        cout << "[GPU] Предупреждение: FP16 недоступен, используется стандартная обработка" << endl;
     }
     cout << endl;
     
