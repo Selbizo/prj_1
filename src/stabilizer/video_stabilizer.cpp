@@ -48,19 +48,19 @@ int frameWidth = 0, frameHeight = 0;
 int a = 0, b = 0;
 
 // Глобальные OpenCL переменные для Винеровского фильтра
-// Инициализируются лениво через getGloalGw() чтобы избежать сегфолта при статической инициализации (OpenCL ещё не готов)
+// Инициализируются лениво через getGlobalGw() чтобы избежать сегфолта при статической инициализации (OpenCL ещё не готов)
 cv::UMat& getGlobalGw() {
     static cv::UMat inst(cv::Size(0, 0), CV_32F);
     return inst;
-}
+} // end getGlobalGw()
 cv::UMat& getGlobalG() {
     static cv::UMat inst(cv::Size(0, 0), CV_32F);
     return inst;
-}
+} // end getGlobalG()
 cv::UMat& getGlobalGGrayWiener() {
     static cv::UMat inst(cv::Size(0, 0), CV_32F);
     return inst;
-}
+} // end getGlobalGGrayWiener()
 #define gHw getGlobalGw()
 #define gH  getGlobalG()
 #define gGrayWiener getGlobalGGrayWiener()
@@ -99,23 +99,23 @@ VideoStabilizer::VideoStabilizer()
     detector = GFTTDetector::create(
         maxCornersConfig, qualityLevelConfig, minDistanceConfig,
         blockSizeConfig, useHarrisDetectorConfig, harrisKConfig
-    );
+    ); // end GFTTDetector::create
 
     cout << "Detector created with maxCorners=" << maxCornersConfig << endl;
     cout << "Memory limits: Queue size=" << MAX_QUEUE_SIZE 
          << ", Frame buffer=" << MAX_FRAME_BUFFER_SIZE << endl;
-}
+} // end VideoStabilizer::VideoStabilizer()
 
 VideoStabilizer::~VideoStabilizer() {
     stop();
-}
+} // end VideoStabilizer::~VideoStabilizer()
 
 void VideoStabilizer::setUseFP16(bool value) {
     useFP16Warp = value;
     if (value) {
         cout << "[GPU] FP16 оптимизация активирована для warpAffine()" << endl;
-    }
-}
+    } // end if (value)
+} // end setUseFP16
 
 void VideoStabilizer::start(bool useVideo, const string& imageFolderPath) {
     running = true;
@@ -127,7 +127,7 @@ void VideoStabilizer::start(bool useVideo, const string& imageFolderPath) {
     
     for (auto& worker : workers) {
         pthreads.push_back(worker.native_handle());
-    }
+    } // end for (worker : workers)
     
     if (captureCore >= 0) setThreadAffinity(pthreads[0], captureCore);
     if (detectionCore >= 0) setThreadAffinity(pthreads[1], detectionCore);
@@ -135,7 +135,7 @@ void VideoStabilizer::start(bool useVideo, const string& imageFolderPath) {
     if (displayCore >= 0) setThreadAffinity(pthreads[3], displayCore);
     
     cout << "Video stabilizer started with " << workers.size() << " threads" << endl;
-}
+} // end start
 
 void VideoStabilizer::stop() {
     running = false;
@@ -146,36 +146,36 @@ void VideoStabilizer::stop() {
         lock_guard<mutex> lock(bufferMutex);
         frameBuffer.clear();
         frameReadyCV.notify_all();
-    }
+    } // end lock_guard<mutex>
     
     for (auto& worker : workers) {
         if (worker.joinable()) worker.join();
-    }
+    } // end for (worker : workers)
     workers.clear();
     pthreads.clear();
     cout << "Video stabilizer stopped. Total frames processed: " << framesProcessed 
          << ", Skipped: " << framesSkipped << endl;
-}
+} // end stop
 
 void VideoStabilizer::captureThreadWrapper(bool useVideo, const string& imageFolderPath) {
     if (captureCore >= 0) setCurrentThreadAffinity(captureCore);
     captureThread(useVideo, imageFolderPath);
-}
+} // end captureThreadWrapper
 
 void VideoStabilizer::detectionAndTrackingThreadWrapper() {
     if (detectionCore >= 0) setCurrentThreadAffinity(detectionCore);
     detectionAndTrackingThread();
-}
+} // end detectionAndTrackingThreadWrapper
 
 void VideoStabilizer::stabilizationThreadWrapper() {
     if (stabilizationCore >= 0) setCurrentThreadAffinity(stabilizationCore);
     stabilizationThread();
-}
+} // end stabilizationThreadWrapper
 
 void VideoStabilizer::displayThreadWrapper() {
     if (displayCore >= 0) setCurrentThreadAffinity(displayCore);
     displayThread();
-}
+} // end displayThreadWrapper
 
 // ========================= ПОТОК ЗАХВАТА КАДРОВ =========================
 void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath) {
@@ -196,8 +196,8 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
             frameSize = Size(640, 480);
             cap.set(CAP_PROP_FRAME_WIDTH, frameSize.width);
             cap.set(CAP_PROP_FRAME_HEIGHT, frameSize.height);
-        }
-    } else {
+        } // end if (frameSize.width <= 0)
+    } else { // else: не камера
         Mat firstFrameCPU;
         loadImage(firstFrameCPU, 0, imageFolderPath);
         if (firstFrameCPU.empty()) {
@@ -207,7 +207,7 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
         }
         frameSize = Size(firstFrameCPU.cols, firstFrameCPU.rows);
         videoFPS = 15.0;
-    }
+    } // end if (useVideo)
     
     if (cap.isOpened() && !useVideo) {
         double fpsFromFile = cap.get(CAP_PROP_FPS);
@@ -257,9 +257,9 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
                 int sleepMs = static_cast<int>(frameDelayMs - elapsed);
                 if (sleepMs > 0 && sleepMs < 100) {
                     this_thread::sleep_for(chrono::milliseconds(sleepMs));
-                }
-            }
-        }
+                } // end if (sleepMs > 0)
+            } // end if (elapsed < frameDelayMs)
+        } // end if (shouldThrottle && frameId > 0)
         
         int totalLag = rawFramesQueue.size() + processedFramesQueue.size();
         int maxAllowedLag = shouldThrottle ? MAX_PROCESSING_LAG * 2 : MAX_PROCESSING_LAG;
@@ -271,19 +271,19 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
                 if (useVideo) {
                     Mat dummy;
                     cap.read(dummy);
-                }
+                } // end if (useVideo)
                 consecutiveSkips = 0;
-            }
+            } // end if (consecutiveSkips > SKIP_FRAMES_THRESHOLD)
             this_thread::sleep_for(chrono::milliseconds(5));
             continue;
-        }
+        } // end if (totalLag > maxAllowedLag)
         
         consecutiveSkips = 0;
         
         FrameData frameData;
         frameData.frameId = frameId++;
         
-        if (useVideo) {
+        if (useVideo) { // if: camera/video source
             bool frameRead = cap.read(frameData.frameCPU);
             if (!frameRead || frameData.frameCPU.empty()) {
                 cerr << "Failed to read frame from camera, reopening..." << endl;
@@ -291,9 +291,9 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
                 cap.open(videoSource);
                 this_thread::sleep_for(chrono::milliseconds(10));
                 continue;
-            }
-        } else {
-            if (cap.isOpened()) {
+            } // end if (!frameRead)
+        } else { // else: image sequence
+            if (cap.isOpened()) { // if: cap still open
                 bool frameRead = cap.read(frameData.frameCPU);
                 if (!frameRead || frameData.frameCPU.empty()) {
                     cout << "Video ended, restarting..." << endl;
@@ -303,9 +303,9 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
                         cout << "Cannot restart video, stopping..." << endl;
                         running = false;
                         break;
-                    }
-                }
-            } else {
+                    } // end if (!frameRead)
+                } // end if (!frameRead)
+            } else { // else: cap not open, load from folder
                 loadImage(frameData.frameCPU, frameData.frameId % 1200, imageFolderPath);
                 if (frameData.frameCPU.empty()) {
                     loadImage(frameData.frameCPU, frameData.frameId % 1200 + 1, imageFolderPath);
@@ -313,11 +313,11 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
                         cout << "Image sequence ended" << endl;
                         running = false;
                         break;
-                    }
+                    } // end if (frameData.frameCPU.empty())
                     frameData.frameId++;
-                }
-            }
-        }
+                } // end if (frameData.frameCPU.empty())
+            } // end else: cap not open
+        } // end else: image sequence
         
         if (frameData.frameCPU.empty()) continue;
         
@@ -337,7 +337,7 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
         while (!pushed && retryCount < MAX_RETRIES && running) {
             if (rawFramesQueue.push(move(frameData))) {
                 pushed = true;
-            } else {
+            } else { // else: push failed
                 retryCount++;
                 this_thread::sleep_for(chrono::milliseconds(5));
                 if (retryCount < MAX_RETRIES && !pushed) {
@@ -347,20 +347,20 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
                     frameData.grayCPU.copyTo(newData.grayCPU);
                     newData.timestamp = frameData.timestamp;
                     frameData = move(newData);
-                }
-            }
-        }
+                } // end if (retryCount < MAX_RETRIES)
+            } // end else: push failed
+        } // end while (!pushed)
         
         if (!pushed) {
             framesSkipped++;
             if (framesSkipped % 30 == 0) {
                 cout << "[CAP] Warning: Dropped frame " << frameData.frameId 
                      << " (queue full). Total skipped: " << framesSkipped << endl;
-            }
-        } else {
+            } // end if (framesSkipped % 30 == 0)
+        } else { // else: pushed
             cout << "[CAP] Frame " << frameData.frameId << " captured and pushed to rawFramesQueue (size: " 
                  << rawFramesQueue.size() << ")" << endl;
-        }
+        } // end if (!pushed)
         
         frameCount++;
         auto now = chrono::steady_clock::now();
@@ -369,18 +369,18 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
             fps = frameCount;
             frameCount = 0;
             lastFpsTime = now;
-        }
+        } // end if (elapsed.count() >= 1000)
         
         auto endTimeCap = chrono::steady_clock::now();
         auto durationCap = chrono::duration_cast<chrono::microseconds>(endTimeCap - startTimeCap);
         processingTimeCapture = (processingTimeCapture * 19.0 + durationCap.count() / 1000.0) / 20.0;
         lastFrameTime = chrono::steady_clock::now();
-    }
+    } // end while (running) — captureThread
     
     if (cap.isOpened()) cap.release();
     cout << "Capture thread stopped. Total frames captured: " << frameCount 
          << ", Skipped: " << framesSkipped << endl;
-}
+} // end captureThread
 
 // ========================= ПОТОК ДЕТЕКТИРОВАНИЯ И ТРЕКИНГА =========================
 void VideoStabilizer::detectionAndTrackingThread() {
@@ -402,7 +402,7 @@ void VideoStabilizer::detectionAndTrackingThread() {
         for (int attempt = 0; attempt < 500 && running; attempt++) {
             if (rawFramesQueue.try_pop(frameData)) break;
             this_thread::sleep_for(chrono::milliseconds(10));
-        }
+        } // end for (attempt)
         
         if (!running) break;
         if (frameData.frameCPU.empty()) continue;
@@ -431,7 +431,7 @@ void VideoStabilizer::detectionAndTrackingThread() {
                     this_thread::sleep_for(chrono::milliseconds(1));
                 processedFramesQueue.push(move(frameData));
                 continue;
-            }
+            } // end try-catch calcOpticalFlowPyrLK
             
             vector<Point2f> goodNew, goodOld;
             int goodCount = 0;
@@ -440,8 +440,8 @@ void VideoStabilizer::detectionAndTrackingThread() {
                     goodNew.push_back(nextPoints[i]);
                     goodOld.push_back(prevPoints[i]);
                     goodCount++;
-                }
-            }
+                } // end if (status[i] && err[i] < 50.0)
+            } // end for (status.size())
             
             if (goodCount >= 6) {
                 Mat T;
@@ -450,31 +450,31 @@ void VideoStabilizer::detectionAndTrackingThread() {
                 } catch (const exception& e) {
                     cerr << "Error in estimateAffine2D: " << e.what() << endl;
                     T = Mat();
-                }
+                } // end try-catch estimateAffine2D
                 
                 if (!T.empty() && T.rows == 2 && T.cols == 3) {
                     double dx = T.at<double>(0, 2) * compressionConfig;
                     double dy = T.at<double>(1, 2) * compressionConfig;
                     double da = atan2(T.at<double>(1, 0), T.at<double>(0, 0));
                     frameData.transformFirstDerivative = TransformParam(dx, dy, da);
-                } else {
+                } else { // else: T невалиден
                     frameData.transformFirstDerivative = TransformParam(0, 0, 0);
-                }
-            } else {
+                } // end if (!T.empty())
+            } else { // else: goodCount < 6
                 frameData.transformFirstDerivative = TransformParam(0, 0, 0);
-            }
+            } // end if (goodCount >= 6)
             
             frameData.points = goodNew;
             trackedPoints.store(static_cast<int>(goodNew.size()));
             consecutiveFailures = 0;
-        } else {
+        } else { // else: !firstFrameForTracking || prevPoints.empty()
             if (consecutiveFailures++ > MAX_CONSECUTIVE_FAILURES) {
                 firstFrameForTracking = true;
                 consecutiveFailures = 0;
                 trackedPoints.store(0);
-            }
+            } // end if (consecutiveFailures++ > MAX_CONSECUTIVE_FAILURES)
             frameData.transformFirstDerivative = TransformParam(0, 0, 0);
-        }
+        } // end if (!firstFrameForTracking && ...)
         
         // ЭТАП 2: Добавление новых точек
         int currentPointCount = frameData.points.size();
@@ -498,14 +498,14 @@ void VideoStabilizer::detectionAndTrackingThread() {
             } catch (const exception& e) {
                 cerr << "Error in detector: " << e.what() << endl;
                 continue;
-            }
+            } // end try-catch detector->detect
             
             Mat exclusionMask = Mat::zeros(frameData.grayCPU.size(), CV_8U);
             if (!frameData.points.empty()) {
                 for (const auto& pt : frameData.points) {
                     circle(exclusionMask, pt, static_cast<int>(minDistanceConfig), Scalar(255), FILLED);
-                }
-            }
+                } // end for (pt : frameData.points)
+            } // end if (!frameData.points.empty())
             
             int maxNewPoints = max(1, static_cast<int>(maxCornersConfig * 0.15));
             int targetNewPoints = min(maxNewPoints, maxCornersConfig - static_cast<int>(frameData.points.size()));
@@ -514,7 +514,7 @@ void VideoStabilizer::detectionAndTrackingThread() {
                 sort(keypoints.begin(), keypoints.end(),
                      [](const KeyPoint& a, const KeyPoint& b) {
                          return a.response > b.response;
-                     });
+                     }); // end sort lambda
                 
                 vector<Point2f> newPoints;
                 for (const auto& kp : keypoints) {
@@ -525,32 +525,32 @@ void VideoStabilizer::detectionAndTrackingThread() {
                         if (exclusionMask.at<uchar>(y, x) == 0) {
                             newPoints.push_back(kp.pt);
                             circle(exclusionMask, kp.pt, static_cast<int>(minDistanceConfig), Scalar(255), FILLED);
-                        }
-                    }
-                }
+                        } // end if (exclusionMask.at == 0)
+                    } // end if (x, y in bounds)
+                } // end for (kp : keypoints)
                 
                 if (!newPoints.empty()) {
                     frameData.points.insert(frameData.points.end(), newPoints.begin(), newPoints.end());
                     removeFramePoints(frameData.points, minDistanceConfig * 0.8);
                     if (frameData.points.size() > maxCornersConfig)
                         frameData.points.resize(maxCornersConfig);
-                }
-            }
+                } // end if (!newPoints.empty())
+            } // end if (targetNewPoints > 0)
             
             if (firstFrameForTracking) {
                 prevPoints = frameData.points;
                 frameData.grayCPU.copyTo(prevGrayCPU);
                 firstFrameForTracking = false;
                 trackedPoints.store(static_cast<int>(prevPoints.size()));
-            }
-        } else {
+            } // end if (firstFrameForTracking)
+        } else { // else: no redetection needed
             framesSinceLastRedetection++;
-        }
+        } // end if (firstFrameForTracking || ...)
         
         if (!firstFrameForTracking) {
             prevPoints = frameData.points;
             frameData.grayCPU.copyTo(prevGrayCPU);
-        }
+        } // end if (!firstFrameForTracking)
         
         // Адаптивная настройка детектора
         if (frameData.points.size() < maxCornersConfig / 6) {
@@ -558,13 +558,13 @@ void VideoStabilizer::detectionAndTrackingThread() {
             harrisKConfig *= 0.98;
             detector->setQualityLevel(qualityLevelConfig);
             detector->setK(harrisKConfig);
-        }
+        } // end if (points < maxCorners/6)
         if (frameData.points.size() > maxCornersConfig * 4 / 5) {
             qualityLevelConfig *= 1.02;
             harrisKConfig *= 1.02;
             detector->setQualityLevel(qualityLevelConfig);
             detector->setK(harrisKConfig);
-        }
+        } // end if (points > maxCorners*4/5)
 
         auto endTimeDetTrack = chrono::steady_clock::now();
         auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - startTimeDetTrack);
@@ -582,11 +582,11 @@ void VideoStabilizer::detectionAndTrackingThread() {
                  << " | Queue size: " << processedFramesQueue.size()
                  << " | Total processed: " << framesProcessedInThread << endl;
             lastLoggedFrame = frameData.frameId;
-        }
-    }
+        } // end if (framesProcessedInThread % 10 == 0)
+    } // end while (running) — detectionAndTrackingThread
     
     cout << "[DETECT] === Detection and Tracking thread stopped. Processed " << framesProcessedInThread << " frames. ===" << endl;
-}
+} // end detectionAndTrackingThread
 
 // ========================= ПОТОК СТАБИЛИЗАЦИИ =========================
 void VideoStabilizer::stabilizationThread() {
@@ -601,7 +601,7 @@ void VideoStabilizer::stabilizationThread() {
         if (!processedFramesQueue.wait_and_pop(frameData)) {
             if (!running) break;
             continue;
-        }
+        } // end if (!wait_and_pop)
 
         auto startTimeStab = chrono::steady_clock::now();
         
@@ -641,22 +641,20 @@ void VideoStabilizer::stabilizationThread() {
 
                 if (frameData.transformFirstDerivative.dx == 0.0)
                     THETA = (frameData.transformFirstDerivative.dy > 0.0) ? 90.0 : -90.0;
-                else
+                else // else: dx != 0
                     THETA = atan(frameData.transformFirstDerivative.dy / frameData.transformFirstDerivative.dx) * RAD_TO_DEG;
                 
-                // ==== Винеровская фильтрация (оригинальное условие: framePart < 0.65 && wiener && !wiener — всегда false) ====
-                if (::framePart < 0.65 && wiener && !wiener)
-                {
+                // ==== Винеровская фильтрация ====
+                if (::framePart < 0.65 && wiener) {
                     UMat zeroMatH(cv::Size(frameWidth, frameHeight), CV_32F, Scalar(0)), complexH;
                     vector<UMat> gChannels(3), gChannelsWiener(3);
 
-                    
                     UMat uFrame32F;
                     frameData.frameGPU.convertTo(uFrame32F, CV_32F);
                     if (uFrame32F.empty()) {
                         cerr << "[Wiener ERROR] uFrame32F is empty!" << endl;
                         continue;
-                    }
+                    } // end if (uFrame32F.empty())
                     
                     // PSF фильтр
                     //Size psfSize = cv::Size((int)LEN * 1 + 10, (int)LEN * 1 + 10);
@@ -666,7 +664,7 @@ void VideoStabilizer::stabilizationThread() {
                     if (gH.empty()) {
                         cerr << "[Wiener ERROR] gH (PSF) is empty!" << endl;
                         continue;
-                    }
+                    } // end if (gH.empty())
                     
                     // Отображаем PSF (один раз для первого кадра)
                     static bool psfDisplayed = true;
@@ -678,7 +676,7 @@ void VideoStabilizer::stabilizationThread() {
                         hDisplay.convertTo(hDisplay, CV_8U);
                         imshow("Wiener_PSF_Filter", hDisplay);
                         psfDisplayed = true;
-                    }
+                    } // end if (!psfDisplayed)
                     
                     // Вычисляем Wiener фильтр
                     GcalcWnrFilter(gH, gHw, nsr);
@@ -698,7 +696,7 @@ void VideoStabilizer::stabilizationThread() {
                         wnrDisplay.convertTo(wnrDisplay, CV_8U);
                         imshow("Wiener_Freq_Response", wnrDisplay);
                         wnrDisplayed = true;
-                    }
+                    } // end if (!wnrDisplayed)
                     
                     // Объединяем действительную и мнимую часть фильтра
                     vector<cv::UMat> planesH = { gHw, zeroMatH };
@@ -707,7 +705,7 @@ void VideoStabilizer::stabilizationThread() {
                     if (complexH.empty()) {
                         cerr << "[Wiener ERROR] complexH is empty!" << endl;
                         continue;
-                    }
+                    } // end if (complexH.empty())
                     
                     // Разделяем каналы
                     split(uFrame32F, gChannels);
@@ -716,8 +714,8 @@ void VideoStabilizer::stabilizationThread() {
                     for (unsigned short i = 0; i < 3; i++) {
                         if (!gChannels[i].empty()) {
                             Gfilter2DFreq(gChannels[i], gChannelsWiener[i], complexH);
-                        }
-                    }
+                        } // end if (!gChannels[i].empty())
+                    } // end for (i < 3)
                     
                     // Объединяем обратно
                     cv::merge(gChannelsWiener, uFrame32F);
@@ -725,15 +723,15 @@ void VideoStabilizer::stabilizationThread() {
                     if (uFrame32F.empty()) {
                         cerr << "[Wiener ERROR] uFrame32F is empty after merge!" << endl;
                         continue;
-                    }
+                    } // end if (uFrame32F.empty())
                     
                     // Сохраняем результат обратно в frameGPU
                     uFrame32F.convertTo(frameData.frameGPU, CV_8UC3);
                     
                     if (frameData.frameGPU.empty()) {
                         cerr << "[Wiener ERROR] frameGPU is empty after Wiener!" << endl;
-                    }
-                }
+                    } // end if (frameData.frameGPU.empty())
+                } // end if (::framePart < 0.65 && wiener) — блок Винеровской фильтрации
                 
                 // Стабилизация (всегда выполняется)
                 UMat stabilizedFrame, croppedFrame;
@@ -755,8 +753,8 @@ void VideoStabilizer::stabilizationThread() {
             } catch (const exception& e) {
                 cerr << "[STAB] ERROR in stabilization: " << e.what() << endl;
                 // Даже при ошибке добавляем кадр в буфер, чтобы не блокировать display
-            }
-        }
+            } // end try-catch
+            } // end if (!frameData.frameCPU.empty())
         
         // Добавляем кадр в буфер для отображения (всегда, даже при ошибках)
         {
@@ -765,7 +763,7 @@ void VideoStabilizer::stabilizationThread() {
             if (frameBuffer.size() >= MAX_FRAME_BUFFER_SIZE) {
                 int oldestFrameId = frameBuffer.begin()->first;
                 frameBuffer.erase(oldestFrameId);
-            }
+            } // end if (frameBuffer.size() >= MAX_FRAME_BUFFER_SIZE)
             
             frameBuffer[frameData.frameId] = move(frameData);
             frameReadyCV.notify_one();
@@ -779,22 +777,22 @@ void VideoStabilizer::stabilizationThread() {
                 for (auto& pair : frameBuffer) {
                     if (pair.first < nextDisplayFrameId - MAX_FRAME_BUFFER_SIZE) {
                         toRemove.push_back(pair.first);
-                    }
-                }
+                    } // end if (pair.first < nextDisplayFrameId - MAX_FRAME_BUFFER_SIZE)
+                } // end for (pair : frameBuffer)
                 for (int id : toRemove) {
                     frameBuffer.erase(id);
-                }
-            }
-        }
+                } // end for (id : toRemove)
+            } // end if (frameBuffer.size() > MAX_FRAME_BUFFER_SIZE)
+        } // end lock_guard<mutex>
 
         auto endTimeStab = chrono::steady_clock::now();
         auto durationStab = chrono::duration_cast<chrono::microseconds>(endTimeStab - startTimeStab);
         processingTimeStabilization = (processingTimeStabilization * 19.0 + durationStab.count() / 1000.0) / 20.0;
-    }
+    } // end while (running) — stabilizationThread
     
     cout << "[STAB] === Stabilization thread stopped. Stabilized " << framesStabilized 
          << " frames, Wiener failures: " << framesSkippedWiener << " ===" << endl;
-}
+} // end stabilizationThread
 
 // ========================= ПОТОК ОТОБРАЖЕНИЯ =========================
 void VideoStabilizer::displayThread() {
@@ -833,16 +831,16 @@ void VideoStabilizer::displayThread() {
                 gotFrame = true;
                 cout << "[DISPLAY] Frame " << frameData.frameId << " received from buffer (nextDisplayId now: " 
                      << nextDisplayFrameId.load() << ")" << endl;
-            } else {
+            } else { // else: frame not found
                 if (!frameBuffer.empty()) {
                     int nextAvailable = -1;
                     for (auto& pair : frameBuffer) {
                         if (pair.first >= nextDisplayFrameId) {
                             if (nextAvailable == -1 || pair.first < nextAvailable) {
                                 nextAvailable = pair.first;
-                            }
-                        }
-                    }
+                            } // end if (nextAvailable == -1 || ...)
+                        } // end if (pair.first >= nextDisplayFrameId)
+                    } // end for (pair : frameBuffer)
                     
                     if (nextAvailable != -1 && nextAvailable - nextDisplayFrameId < 3) {
                         frameData = move(frameBuffer[nextAvailable]);
@@ -851,30 +849,30 @@ void VideoStabilizer::displayThread() {
                         gotFrame = true;
                         cout << "[DISPLAY] Frame " << frameData.frameId << " (skipped " 
                              << (nextAvailable - frameData.frameId) << " frames) from buffer" << endl;
-                    } else if (!frameBuffer.empty()) {
+                    } else if (!frameBuffer.empty()) { // else: large gap
                         cout << "[DISPLAY] WARNING: Large gap detected, resetting nextDisplayId to " 
                              << frameBuffer.begin()->first << " (buffer size: " << frameBuffer.size() << ")" << endl;
                         nextDisplayFrameId = frameBuffer.begin()->first;
                         continue;
-                    }
-                }
+                    } // end else if (!frameBuffer.empty())
+                } // end if (!frameBuffer.empty())
                 
                 if (!gotFrame) {
                     // Периодически логируем состояние очереди
                     if (displayedFrames % 50 == 0) {
                         cout << "[DISPLAY] No frame available, buffer size: " << frameBuffer.size() 
                              << ", nextDisplayId: " << nextDisplayFrameId.load() << endl;
-                    }
+                    } // end if (displayedFrames % 50 == 0)
                     frameReadyCV.wait_for(lock, chrono::milliseconds(5));
                     continue;
-                }
-            }
-        }
+                } // end if (!gotFrame)
+            } // end else: frame not found
+        } // end unique_lock<mutex>
         
         if (!gotFrame || frameData.frameCPU.empty()) {
             this_thread::sleep_for(chrono::milliseconds(1));
             continue;
-        }
+        } // end if (!gotFrame || empty)
         
         displayedFrames++;
         
@@ -964,7 +962,7 @@ string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / 
     if (writer.isOpened()) writer.release();
     destroyWindow(windowName);
     cout << "[DISPLAY] === Display thread stopped. Displayed " << displayedFrames << " frames. ===" << endl;
-}
+} // end displayThread
 
 // ========================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =========================
 void VideoStabilizer::loadImage(Mat& image, int frame_id, const string& filepath) {
@@ -981,15 +979,15 @@ void iirAdaptive(TransformParam& transformsFirstDerivative, TransformParam& tran
                  double& tauStab, Rect& roi, int a, int b, double& kSwitch) {
     if (abs(transformsFirstDerivative.dx) < 4.0 * transformSKO.dx + a / 8) {
         transforms.dx = kSwitch * (transforms.dx * (tauStab - 1.0) / tauStab + kSwitch * transformsFirstDerivative.dx);
-    }
+    } // end if (dx threshold)
 
     if (abs(transformsFirstDerivative.dy) < 4.0 * transformSKO.dy + b / 8) {
         transforms.dy = kSwitch * (transforms.dy * (tauStab - 1.0) / tauStab + kSwitch * transformsFirstDerivative.dy);
-    }
+    } // end if (dy threshold)
 
     if (abs(transformsFirstDerivative.da) < 4.0 * transformSKO.da + 0.1) {
         transforms.da = kSwitch * (transforms.da * (tauStab - 1.0) / tauStab + kSwitch * transformsFirstDerivative.da);
-    }
+    } // end if (da threshold)
 
     if (transforms.da > CV_PI) transforms.da -= CV_PI;
     if (transforms.da < -CV_PI) transforms.da += CV_PI;
@@ -999,35 +997,35 @@ void iirAdaptive(TransformParam& transformsFirstDerivative, TransformParam& tran
     if (tauStab < TAU_STAB_MAX && !(abs(transforms.dx) > a / 3 || abs(transforms.dy) > b / 3)) {
         tauStab *= 1.1;
         if (tauStab > TAU_STAB_MAX) tauStab = TAU_STAB_MAX;
-    }
+    } // end if (tauStab < TAU_STAB_MAX)
 
     if (roi.x + (int)transforms.dx < 0) {
         transforms.dx = double(1 - roi.x);
         if (tauStab > TAU_STAB_MAX / 2) {
             tauStab *= 0.9;
             kSwitch *= 0.95;
-        }
-    } else if (roi.x + roi.width + (int)transforms.dx >= a) {
+        } // end if (tauStab > TAU_STAB_MAX / 2)
+    } else if (roi.x + roi.width + (int)transforms.dx >= a) { // else: dx >= a
         transforms.dx = double(a - roi.x - roi.width);
         if (tauStab > TAU_STAB_MAX / 2) {
             tauStab *= 0.9;
             kSwitch *= 0.95;
-        }
-    }
+        } // end if (tauStab > TAU_STAB_MAX / 2)
+    } // end if/else (roi.x bounds)
 
     if (roi.y + (int)transforms.dy < 0) {
         transforms.dy = double(1 - roi.y);
         if (tauStab > TAU_STAB_MAX / 8) {
             tauStab *= 0.9;
             kSwitch *= 0.95;
-        }
-    } else if (roi.y + roi.height + (int)transforms.dy >= b) {
+        } // end if (tauStab > TAU_STAB_MAX / 8)
+    } else if (roi.y + roi.height + (int)transforms.dy >= b) { // else: dy >= b
         transforms.dy = double(b - roi.y - roi.height);
         if (tauStab > TAU_STAB_MAX / 2) {
             tauStab *= 0.9;
             kSwitch *= 0.95;
-        }
-    }
+        } // end if (tauStab > TAU_STAB_MAX / 2)
+    } // end if/else (roi.y bounds)
 
     if (kSwitch < 1.0) tauStab *= (4.0 + kSwitch) / 5.0;
 
@@ -1036,4 +1034,4 @@ void iirAdaptive(TransformParam& transformsFirstDerivative, TransformParam& tran
     transformSKO.da = (1.0 - 0.1) * transformSKO.da + 0.1 * abs(transformsFirstDerivative.da);
 
     transforms.getTransformInvert(stabMatrix);
-}
+} // end iirAdaptive
