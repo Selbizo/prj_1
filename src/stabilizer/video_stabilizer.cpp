@@ -48,9 +48,22 @@ int frameWidth = 0, frameHeight = 0;
 int a = 0, b = 0;
 
 // Глобальные OpenCL переменные для Винеровского фильтра
-cv::UMat gHw(cv::Size(0, 0), CV_32F, cv::Scalar(0));
-cv::UMat gH(cv::Size(0, 0), CV_32F, cv::Scalar(0));
-cv::UMat gGrayWiener(cv::Size(0, 0), CV_32F, cv::Scalar(0));
+// Инициализируются лениво через getGloalGw() чтобы избежать сегфолта при статической инициализации (OpenCL ещё не готов)
+cv::UMat& getGlobalGw() {
+    static cv::UMat inst(cv::Size(0, 0), CV_32F);
+    return inst;
+}
+cv::UMat& getGlobalG() {
+    static cv::UMat inst(cv::Size(0, 0), CV_32F);
+    return inst;
+}
+cv::UMat& getGlobalGGrayWiener() {
+    static cv::UMat inst(cv::Size(0, 0), CV_32F);
+    return inst;
+}
+#define gHw getGlobalGw()
+#define gH  getGlobalG()
+#define gGrayWiener getGlobalGGrayWiener()
 
 // ========================= КОНСТРУКТОР =========================
 VideoStabilizer::VideoStabilizer() 
