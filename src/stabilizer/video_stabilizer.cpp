@@ -185,9 +185,39 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
     
     VideoCapture cap;
     double videoFPS = 15.0;
-    
+
     if (useVideo) {
-        cap.open(videoSource);
+        // Определяем тип источника: MIPI/v4l2 камера, IP-камера или видеофайл
+        bool isV4L2Camera = (videoSource.find("/dev/video") != string::npos);
+        bool isIPCamera = (videoSource.substr(0, 7) == "http://");
+
+        if (isV4L2Camera) {
+            // MIPI камера OS08A10: используем CAP_V4L2 напрямую (не GStreamer).
+            // GStreamer падает с "Internal data stream error" на v4l2src из-за
+            // дискретных размеров сенсора. Также отключаем автоконтролы — снижают
+            // current draw и предотвращают spikes тока, вызывающие выключение платы.
+            cap.open(videoSource, cv::CAP_V4L2);
+
+            // Отключить автоконтролы сенсора — каждый запуск сбрасывает их заново
+            system("v4l2-ctl -d /dev/video0 -c gain_automatic=0 2>/dev/null");
+            system("v4l2-ctl -d /dev/video0 -c white_balance_automatic=0 2>/dev/null");
+            system("v4l2-ctl -d /dev/video0 -c auto_exposure=0 2>/dev/null");
+
+            if (!cap.isOpened()) {
+                cerr << "[CAP] Failed to open V4L2 camera: " << videoSource << endl;
+                running = false;
+                return;
+            } // end if (!cap.isOpened())
+        } else {
+            // IP-камера или видеофайл — используем стандартный бэкенд (GStreamer/FFMPEG)
+            cap.open(videoSource);
+            if (!cap.isOpened()) {
+                cerr << "[CAP] Failed to open source: " << videoSource << endl;
+                running = false;
+                return;
+            } // end if (!cap.isOpened())
+        } // end if (isV4L2Camera)
+
         frameSize = Size(
             static_cast<int>(cap.get(CAP_PROP_FRAME_WIDTH)),
             static_cast<int>(cap.get(CAP_PROP_FRAME_HEIGHT))
