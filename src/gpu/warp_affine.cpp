@@ -36,7 +36,9 @@ GPUCapabilities detectGPUCapabilities() {
     
     if (caps.gpuName.find("Mali") != string::npos) {
         caps.supportsHalfType = true;
-        cout << "[GPU] ✓ Обнаружена Mali GPU - активирована FP16 поддержка" << endl;
+        // Заявленная поддержка half != рабочая: ядро OpenCV для half3 на Mali-G52
+        // не собирается (CL_BUILD_PROGRAM_FAILURE), поэтому FP16 не используется.
+        cout << "[GPU] ✓ Обнаружена Mali GPU (half заявлен драйвером, но не используется)" << endl;
     }
     
     return caps;

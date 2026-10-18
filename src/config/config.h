@@ -42,8 +42,11 @@ constexpr int maxLevelConfig = 5;
 constexpr int itersConfig = 10;
 
 // Память
-constexpr int MAX_QUEUE_SIZE = 7;
-constexpr int MAX_FRAME_BUFFER_SIZE = 10;
+// Глубина конвейера напрямую задаёт сквозную задержку:
+// лаг ≈ MAX_QUEUE_SIZE + MAX_QUEUE_SIZE + MAX_FRAME_BUFFER_SIZE кадров.
+// Было 7/7/10 (до ~24 кадров ≈ 0.8 с при 30 FPS) — слишком много для live-видео.
+constexpr int MAX_QUEUE_SIZE = 3;
+constexpr int MAX_FRAME_BUFFER_SIZE = 4;
 constexpr int SKIP_FRAMES_THRESHOLD = 3;
 
 // Источник видео по умолчанию
@@ -63,6 +66,17 @@ extern bool threadwiener;
 extern double framePart;
 extern Rect roi;
 extern int frameWidth, frameHeight;
+
+// ========================= ДИАГНОСТИКА =========================
+// Подробный построчный лог кадров. Влияет на производительность (флаш stdout +
+// конкуренция за мьютекс iostream), поэтому по умолчанию ВЫКЛЮЧЕН.
+// Включается переменной окружения VS_VERBOSE=1.
+extern bool gVerbose;
+
+// Интерполяция при уменьшении кадра для трекинга (1920x1080 -> 384x216).
+// INTER_AREA (~12 мс, лучшее качество) или INTER_LINEAR (~3 мс, быстрее).
+// Переключается переменной окружения VS_FAST_RESIZE=1.
+extern int captureResizeInterp;
 
 // ========================= ГЛОБАЛЬНЫЕ OPENCL ПЕРЕМЕННЫЕ =========================
 // Глобальные UMat для Винеровского фильтра (используются в stabilizer)

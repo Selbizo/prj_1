@@ -23,6 +23,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <unistd.h>
+#include <cstdlib>
 
 using namespace cv;
 using namespace std;
@@ -46,6 +47,12 @@ double framePart = 0.7;
 Rect roi;
 int frameWidth = 0, frameHeight = 0;
 int a = 0, b = 0;
+
+// Подробный лог кадров (см. config.h). Влияет на производительность.
+bool gVerbose = false;
+
+// Интерполяция уменьшения кадра для трекинга (см. config.h)
+int captureResizeInterp = INTER_AREA;
 
 // Глобальные OpenCL переменные для Винеровского фильтра
 // Инициализируются лениво через getGlobalGw() чтобы избежать сегфолта при статической инициализации (OpenCL ещё не готов)
@@ -104,6 +111,24 @@ VideoStabilizer::VideoStabilizer()
     cout << "Detector created with maxCorners=" << maxCornersConfig << endl;
     cout << "Memory limits: Queue size=" << MAX_QUEUE_SIZE 
          << ", Frame buffer=" << MAX_FRAME_BUFFER_SIZE << endl;
+
+    const char* vlog = getenv("VS_VERBOSE");
+    gVerbose = (vlog != nullptr && string(vlog) != "0");
+    const char* warpCpu = getenv("VS_WARP_CPU");
+    useCpuWarp = (warpCpu != nullptr && string(warpCpu) != "0");
+    const char* fastResize = getenv("VS_FAST_RESIZE");
+    if (fastResize != nullptr && string(fastResize) != "0") captureResizeInterp = INTER_LINEAR;
+    // По умолчанию upload идёт через pinned (host) память: на Mali с hostUnifiedMemory=1
+    // это ~в 3 раза дешевле, чем запись в device-буфер (измерено). VS_PINNED=0 отключает,
+    // =1 оба буфера, =3 только приёмник.
+    const char* pinned = getenv("VS_PINNED");
+    pinnedMode = (pinned != nullptr) ? atoi(pinned) : 2;
+    cout << "[LOG] Построчный лог кадров: " << (gVerbose ? "ВКЛ (VS_VERBOSE)" : "выкл (VS_VERBOSE=1 для включения)") << endl;
+    cout << "[WARP] Режим warpAffine: " << (useCpuWarp ? "CPU" : "GPU (OpenCL)") << endl;
+    if (!useCpuWarp) {
+        cout << "[WARP] GPU-буферы: VS_PINNED=" << pinnedMode
+             << (pinnedMode == 0 ? " (device)" : " (host memory)") << endl;
+    } // end if (!useCpuWarp)
 } // end VideoStabilizer::VideoStabilizer()
 
 VideoStabilizer::~VideoStabilizer() {
@@ -112,9 +137,15 @@ VideoStabilizer::~VideoStabilizer() {
 
 void VideoStabilizer::setUseFP16(bool value) {
     useFP16Warp = value;
-    if (value) {
+    // FP16 реально применяется только если включён USE_FP16_WARP (см. warp_affine.cpp).
+    // Сообщаем фактическое состояние, а не запрошенное: на Mali-G52 ядро OpenCV для
+    // half3 не собирается (CL_BUILD_PROGRAM_FAILURE), поэтому FP16 держим выключенным.
+    if (value && !USE_FP16_WARP) {
+        cout << "[GPU] FP16 запрошен, но отключён (USE_FP16_WARP=false в config.h); "
+             << "используется обычный warpAffine" << endl;
+    } else if (value) {
         cout << "[GPU] FP16 оптимизация активирована для warpAffine()" << endl;
-    } // end if (value)
+    } // end if (value && !USE_FP16_WARP)
 } // end setUseFP16
 
 void VideoStabilizer::start(bool useVideo, const string& imageFolderPath) {
@@ -139,6 +170,8 @@ void VideoStabilizer::start(bool useVideo, const string& imageFolderPath) {
 
 void VideoStabilizer::stop() {
     running = false;
+    rawFramesQueue.shutdown();
+    processedFramesQueue.shutdown();
     rawFramesQueue.clear();
     processedFramesQueue.clear();
     
@@ -197,6 +230,22 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
             // дискретных размеров сенсора. Также отключаем автоконтролы — снижают
             // current draw и предотвращают spikes тока, вызывающие выключение платы.
             cap.open(videoSource, cv::CAP_V4L2);
+
+            // Явно задаём формат захвата. Без этого OpenCV V4L2 открывает узел
+            // в дефолтном режиме 640x480 RGB3, и драйвер Amlogic уходит в медленный
+            // режим (~1-2 fps). OS08A10 поддерживает только дискретные размеры
+            // 1920x1080 / 3840x2160, поэтому запрашиваем 1920x1080@YUYV — это
+            // сенсорный режим 120 fps (HTS=1036 / VTS=1158). Размер можно переопределить
+            // переменными окружения VS_CAM_WIDTH / VS_CAM_HEIGHT (например, 3840x2160).
+            if (cap.isOpened()) {
+                int reqW = 1920, reqH = 1080;
+                if (const char* e = getenv("VS_CAM_WIDTH"))  { int v = atoi(e); if (v > 0) reqW = v; }
+                if (const char* e = getenv("VS_CAM_HEIGHT")) { int v = atoi(e); if (v > 0) reqH = v; }
+                cap.set(CAP_PROP_FRAME_WIDTH, reqW);
+                cap.set(CAP_PROP_FRAME_HEIGHT, reqH);
+                cap.set(CAP_PROP_FOURCC, VideoWriter::fourcc('Y', 'U', 'Y', 'V'));
+                cout << "[CAP] Requested " << reqW << "x" << reqH << " YUYV" << endl;
+            }
 
             // Отключить автоконтролы сенсора — каждый запуск сбрасывает их заново
             system("v4l2-ctl -d /dev/video0 -c gain_automatic=0 2>/dev/null");
@@ -276,6 +325,7 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
     auto lastFrameTime = chrono::steady_clock::now();
     int frameCount = 0;
     int consecutiveSkips = 0;
+    Mat grayFullCPU;  // переиспользуемый буфер для grayscale полного кадра
     
     while (running) {
         auto startTimeCap = chrono::steady_clock::now();
@@ -351,14 +401,15 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
         
         if (frameData.frameCPU.empty()) continue;
         
-        Mat compressed, gray;
         Size compressedSize(frameWidth / compressionConfig, frameHeight / compressionConfig);
         if (compressedSize.width <= 0) compressedSize.width = 1;
         if (compressedSize.height <= 0) compressedSize.height = 1;
         
-        resize(frameData.frameCPU, compressed, compressedSize, 0, 0, INTER_AREA);
-        cvtColor(compressed, gray, COLOR_BGR2GRAY);
-        gray.copyTo(frameData.grayCPU);
+        // Быстрее ~в 2 раза без потери качества: сначала grayscale на полном кадре,
+        // затем уменьшение уже серого. Серый линеен по BGR, поэтому результат
+        // эквивалентен resize цвета + cvtColor, но читается в 3 раза меньше данных.
+        cvtColor(frameData.frameCPU, grayFullCPU, COLOR_BGR2GRAY);
+        resize(grayFullCPU, frameData.grayCPU, compressedSize, 0, 0, captureResizeInterp);
         
         bool pushed = false;
         int retryCount = 0;
@@ -387,7 +438,7 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
                 cout << "[CAP] Warning: Dropped frame " << frameData.frameId 
                      << " (queue full). Total skipped: " << framesSkipped << endl;
             } // end if (framesSkipped % 30 == 0)
-        } else { // else: pushed
+        } else if (gVerbose) { // else: pushed
             cout << "[CAP] Frame " << frameData.frameId << " captured and pushed to rawFramesQueue (size: " 
                  << rawFramesQueue.size() << ")" << endl;
         } // end if (!pushed)
@@ -429,10 +480,9 @@ void VideoStabilizer::detectionAndTrackingThread() {
     while (running) {
         FrameData frameData;
         
-        for (int attempt = 0; attempt < 500 && running; attempt++) {
-            if (rawFramesQueue.try_pop(frameData)) break;
-            this_thread::sleep_for(chrono::milliseconds(10));
-        } // end for (attempt)
+        // Блокирующее ожидание кадра вместо опроса с sleep(10ms):
+        // раньше каждый кадр добавлял до 10 мс искусственной задержки.
+        if (!rawFramesQueue.wait_and_pop(frameData)) break;
         
         if (!running) break;
         if (frameData.frameCPU.empty()) continue;
@@ -606,7 +656,7 @@ void VideoStabilizer::detectionAndTrackingThread() {
         processedFramesQueue.push(move(frameData));
         
         // Логирование каждые 10 кадров
-        if (framesProcessedInThread % 10 == 0 && framesProcessedInThread != lastLoggedFrame) {
+        if (gVerbose && framesProcessedInThread % 10 == 0 && framesProcessedInThread != lastLoggedFrame) {
             cout << "[DETECT] Frame " << frameData.frameId 
                  << " processed | Points tracked: " << frameData.points.size()
                  << " | Queue size: " << processedFramesQueue.size()
@@ -663,8 +713,33 @@ void VideoStabilizer::stabilizationThread() {
                     }
                 }
                 
-                // Копируем кадр на GPU
-                frameData.frameCPU.copyTo(frameData.frameGPU);
+                // Копируем кадр на GPU (только если он реально нужен: Винер или GPU-warp)
+                const bool wienerActive = (::framePart < 0.65 && wiener);
+                // Буферы под GPU-warp: тип размещения выбирается один раз.
+                // VS_PINNED=1 -> host-memory (CL_MEM_ALLOC_HOST_PTR). На Mali hostUnifiedMemory=1
+                // копии через pinned-память ~в 2 раза дешевле, чем в device-буфер.
+                if (wienerActive || !useCpuWarp) {
+                    const UMatUsageFlags srcUsage =
+                        (pinnedMode == 1 || pinnedMode == 2) ? USAGE_ALLOCATE_HOST_MEMORY : USAGE_DEFAULT;
+                    const UMatUsageFlags dstUsage =
+                        (pinnedMode == 1 || pinnedMode == 3) ? USAGE_ALLOCATE_HOST_MEMORY : USAGE_DEFAULT;
+                    if (gpuFrame.empty() || gpuFrame.size() != frameData.frameCPU.size() ||
+                        gpuFrame.type() != frameData.frameCPU.type()) {
+                        gpuFrame.create(frameData.frameCPU.rows, frameData.frameCPU.cols,
+                                        frameData.frameCPU.type(), srcUsage);
+                    } // end if (gpuFrame needs realloc)
+                    if (!useCpuWarp &&
+                        (gpuWarpDst.empty() || gpuWarpDst.size() != roi.size() || gpuWarpDst.type() != CV_8UC3)) {
+                        gpuWarpDst.create(roi.height, roi.width, CV_8UC3, dstUsage);
+                    } // end if (gpuWarpDst needs realloc)
+                } // end if (wienerActive || !useCpuWarp)
+                auto tUpload0 = chrono::steady_clock::now();
+                if (wienerActive || !useCpuWarp) {
+                    frameData.frameCPU.copyTo(gpuFrame);
+                }
+                auto tUpload1 = chrono::steady_clock::now();
+                processingTimeUpload = (processingTimeUpload * 19.0 +
+                    chrono::duration_cast<chrono::microseconds>(tUpload1 - tUpload0).count() / 1000.0) / 20.0;
                 
                 LEN = sqrt(frameData.transformFirstDerivative.dx * frameData.transformFirstDerivative.dx + 
                     frameData.transformFirstDerivative.dy * frameData.transformFirstDerivative.dy) * D;
@@ -675,12 +750,12 @@ void VideoStabilizer::stabilizationThread() {
                     THETA = atan(frameData.transformFirstDerivative.dy / frameData.transformFirstDerivative.dx) * RAD_TO_DEG;
                 
                 // ==== Винеровская фильтрация ====
-                if (::framePart < 0.65 && wiener) {
+                if (wienerActive) {
                     UMat zeroMatH(cv::Size(frameWidth, frameHeight), CV_32F, Scalar(0)), complexH;
                     vector<UMat> gChannels(3), gChannelsWiener(3);
 
                     UMat uFrame32F;
-                    frameData.frameGPU.convertTo(uFrame32F, CV_32F);
+                    gpuFrame.convertTo(uFrame32F, CV_32F);
                     if (uFrame32F.empty()) {
                         cerr << "[Wiener ERROR] uFrame32F is empty!" << endl;
                         continue;
@@ -756,24 +831,46 @@ void VideoStabilizer::stabilizationThread() {
                     } // end if (uFrame32F.empty())
                     
                     // Сохраняем результат обратно в frameGPU
-                    uFrame32F.convertTo(frameData.frameGPU, CV_8UC3);
+                    uFrame32F.convertTo(gpuFrame, CV_8UC3);
                     
-                    if (frameData.frameGPU.empty()) {
+                    if (gpuFrame.empty()) {
                         cerr << "[Wiener ERROR] frameGPU is empty after Wiener!" << endl;
-                    } // end if (frameData.frameGPU.empty())
+                    } // end if (gpuFrame.empty())
                 } // end if (::framePart < 0.65 && wiener) — блок Винеровской фильтрации
                 
                 // Стабилизация (всегда выполняется)
-                UMat stabilizedFrame, croppedFrame;
-                warpAffineOptimized(frameData.frameGPU, stabilizedFrame, frameData.stabMatrix, frameSize, 
-                                   cv::INTER_LINEAR, cv::BORDER_CONSTANT, Scalar(), useFP16Warp);
-                croppedFrame = stabilizedFrame(roi);
-                
-                // Копируем результат обратно на CPU для отображения
-                croppedFrame.copyTo(frameData.frameCPU);
+                // Внимание: матрица stabMatrix уже в координатах ROI, поэтому warp идёт
+                // сразу в размер ROI — это ~в 1.4 раза меньше пикселей и без отдельного crop.
+                auto tWarp0 = chrono::steady_clock::now();
+                if (useCpuWarp) {
+                    // CPU-вариант: warp прямо из CPU-кадра, без upload/download на GPU
+                    Mat stabTmp;
+                    warpAffine(frameData.frameCPU, stabTmp, frameData.stabMatrix, roi.size(),
+                               cv::INTER_LINEAR, cv::BORDER_CONSTANT, Scalar());
+                    auto tWarp1 = chrono::steady_clock::now();
+                    processingTimeWarp = (processingTimeWarp * 19.0 +
+                        chrono::duration_cast<chrono::microseconds>(tWarp1 - tWarp0).count() / 1000.0) / 20.0;
+                    processingTimeDownload = (processingTimeDownload * 19.0 + 0.0) / 20.0;
+                    cv::swap(stabTmp, frameData.frameCPU);
+                } else {
+                    warpAffineOptimized(gpuFrame, gpuWarpDst, frameData.stabMatrix, roi.size(), 
+                                       cv::INTER_LINEAR, cv::BORDER_CONSTANT, Scalar(), useFP16Warp);
+                    // warpAffine на UMat асинхронный: без finish() сюда попадает только
+                    // постановка ядра (~1 мс), а его реальное время уезжает в счётчик dl.
+                    cv::ocl::finish();
+                    auto tWarp1 = chrono::steady_clock::now();
+                    processingTimeWarp = (processingTimeWarp * 19.0 +
+                        chrono::duration_cast<chrono::microseconds>(tWarp1 - tWarp0).count() / 1000.0) / 20.0;
+                    
+                    // Копируем результат обратно на CPU для отображения
+                    gpuWarpDst.copyTo(frameData.frameCPU);
+                    auto tDl1 = chrono::steady_clock::now();
+                    processingTimeDownload = (processingTimeDownload * 19.0 +
+                        chrono::duration_cast<chrono::microseconds>(tDl1 - tWarp1).count() / 1000.0) / 20.0;
+                }
                 // ====================================
                 
-                cout << "[STAB] Frame " << frameData.frameId 
+                if (gVerbose) cout << "[STAB] Frame " << frameData.frameId 
                      << " stabilized | Points: " << frameData.points.size()
                      << " | Transform: dx=" << frameData.transform.dx 
                      << " dy=" << frameData.transform.dy 
@@ -798,7 +895,7 @@ void VideoStabilizer::stabilizationThread() {
             frameBuffer[frameData.frameId] = move(frameData);
             frameReadyCV.notify_one();
             
-            cout << "[STAB] Frame " << frameData.frameId 
+            if (gVerbose) cout << "[STAB] Frame " << frameData.frameId 
                  << " pushed to display buffer (size: " << frameBuffer.size() 
                  << ", nextDisplayId: " << nextDisplayFrameId.load() << ")" << endl;
             
@@ -830,8 +927,14 @@ void VideoStabilizer::displayThread() {
     cout << "[DISPLAY] === Display thread started ===" << endl;
     
     const string windowName = "Video Stabilization";
-    namedWindow(windowName, WINDOW_NORMAL);
-    resizeWindow(windowName, 1280, 720);
+    const char* ngui = getenv("VS_NO_GUI");
+    const bool noGui = (ngui != nullptr && string(ngui) != "0");
+    double displayScale = 1.0;
+    const char* dscale = getenv("VS_DISPLAY_SCALE");
+    if (dscale != nullptr) { double v = atof(dscale); if (v > 0.0) displayScale = v; }
+    // WINDOW_AUTOSIZE: X11 не масштабирует картинку -> минимальная задержка imshow.
+    // Раньше было WINDOW_NORMAL + resize до 1920x1080 (13 мс/кадр + медленный вывод).
+    if (!noGui) namedWindow(windowName, WINDOW_AUTOSIZE);
     
     VideoWriter writer;
     if (recordEnable) {
@@ -844,6 +947,8 @@ void VideoStabilizer::displayThread() {
     auto lastDisplayTime = chrono::steady_clock::now();
     auto lastFrameTime = chrono::steady_clock::now();
     int lastLoggedDisplay = -1;
+    auto lastStatsTime = chrono::steady_clock::now();
+    long lastStatsFrameId = -1;
     
     while (running) {
         auto startTimeDisp = chrono::steady_clock::now();
@@ -859,7 +964,7 @@ void VideoStabilizer::displayThread() {
                 frameBuffer.erase(it);
                 nextDisplayFrameId++;
                 gotFrame = true;
-                cout << "[DISPLAY] Frame " << frameData.frameId << " received from buffer (nextDisplayId now: " 
+                if (gVerbose) cout << "[DISPLAY] Frame " << frameData.frameId << " received from buffer (nextDisplayId now: " 
                      << nextDisplayFrameId.load() << ")" << endl;
             } else { // else: frame not found
                 if (!frameBuffer.empty()) {
@@ -872,15 +977,17 @@ void VideoStabilizer::displayThread() {
                         } // end if (pair.first >= nextDisplayFrameId)
                     } // end for (pair : frameBuffer)
                     
-                    if (nextAvailable != -1 && nextAvailable - nextDisplayFrameId < 3) {
+                    if (nextAvailable != -1) {
+                        // Сразу перескакиваем на ближайший доступный (самый свежий) кадр —
+                        // это минимизирует задержку вместо ожидания «правильного» ID.
                         frameData = move(frameBuffer[nextAvailable]);
                         frameBuffer.erase(nextAvailable);
                         nextDisplayFrameId = nextAvailable + 1;
                         gotFrame = true;
-                        cout << "[DISPLAY] Frame " << frameData.frameId << " (skipped " 
+                        if (gVerbose) cout << "[DISPLAY] Frame " << frameData.frameId << " (skipped " 
                              << (nextAvailable - frameData.frameId) << " frames) from buffer" << endl;
-                    } else if (!frameBuffer.empty()) { // else: large gap
-                        cout << "[DISPLAY] WARNING: Large gap detected, resetting nextDisplayId to " 
+                    } else if (!frameBuffer.empty()) { // else: все кадры старше ожидаемого
+                        if (gVerbose) cout << "[DISPLAY] WARNING: Large gap detected, resetting nextDisplayId to " 
                              << frameBuffer.begin()->first << " (buffer size: " << frameBuffer.size() << ")" << endl;
                         nextDisplayFrameId = frameBuffer.begin()->first;
                         continue;
@@ -889,7 +996,7 @@ void VideoStabilizer::displayThread() {
                 
                 if (!gotFrame) {
                     // Периодически логируем состояние очереди
-                    if (displayedFrames % 50 == 0) {
+                    if (gVerbose && displayedFrames % 50 == 0) {
                         cout << "[DISPLAY] No frame available, buffer size: " << frameBuffer.size() 
                              << ", nextDisplayId: " << nextDisplayFrameId.load() << endl;
                     } // end if (displayedFrames % 50 == 0)
@@ -906,8 +1013,16 @@ void VideoStabilizer::displayThread() {
         
         displayedFrames++;
         
-        Mat displayFrame;
-        resize(frameData.frameCPU, displayFrame, Size(frameWidth, frameHeight), INTER_AREA);
+        // Не масштабируем кадр — показываем как есть (размер ROI).
+        // Раньше здесь был resize ROI->1920x1080 (INTER_AREA, ~13 мс/кадр) впустую.
+        // VS_DISPLAY_SCALE=0.5 — показывать уменьшенное превью (меньше нагрузка на GPU/X11).
+        Mat displayScaled;
+        Mat* displayFramePtr = &frameData.frameCPU;
+        if (displayScale > 0.0 && displayScale < 1.0) {
+            resize(frameData.frameCPU, displayScaled, Size(), displayScale, displayScale, INTER_LINEAR);
+            displayFramePtr = &displayScaled;
+        }
+        Mat& displayFrame = *displayFramePtr;
         
         string infoText = format("FPS: %d | nsr: %1.2f | D: %1.2f | part: %1.2f | Skip: %d",
                                 fps.load(), nsr, D, ::framePart, framesSkipped.load());
@@ -920,7 +1035,7 @@ string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / 
 
         // отладочная инфомация
 
-        cout << "Frame ID: " << frameData.frameId << " | Tracked points: " << trackedPoints.load() 
+        if (gVerbose) cout << "Frame ID: " << frameData.frameId << " | Tracked points: " << trackedPoints.load() 
              << " | Transform: dx=" << frameData.transform.dx 
              << ", dy=" << frameData.transform.dy 
              << ", da=" << frameData.transform.da * RAD_TO_DEG 
@@ -929,15 +1044,19 @@ string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / 
              << ", da=" << frameData.transformFirstDerivative.da * RAD_TO_DEG 
              << endl;
              
-        putText(displayFrame, infoText, Point(10, 50 * frameWidth / 800),
-               FONT_HERSHEY_SIMPLEX, 0.5 * frameWidth / 800, colorBLUE, 2 * frameWidth / 800);
-        putText(displayFrame, infoLatencies, Point(10, 100 * frameWidth / 800),
-               FONT_HERSHEY_SIMPLEX, 0.5 * frameWidth / 800, colorBLUE, 2 * frameWidth / 800);
+        const int dw = displayFrame.cols;
+        putText(displayFrame, infoText, Point(10, 50 * dw / 800),
+               FONT_HERSHEY_SIMPLEX, 0.5 * dw / 800, colorBLUE, 2 * dw / 800);
+        putText(displayFrame, infoLatencies, Point(10, 100 * dw / 800),
+               FONT_HERSHEY_SIMPLEX, 0.5 * dw / 800, colorBLUE, 2 * dw / 800);
         
-        imshow(windowName, displayFrame);
-
+        if (!noGui) {
+            imshow(windowName, displayFrame);
+        } else {
+            this_thread::sleep_for(chrono::milliseconds(1));
+        }
         
-        int key = waitKey(1);
+        int key = noGui ? -1 : waitKey(1);
         if (key == 27 || key == 'q') {
             cout << "Exit requested by user" << endl;
             running = false;
@@ -987,10 +1106,39 @@ string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / 
             if (nsr < 0.01)
                 nsr = 0.01;
         }
+
+        // ===== Замер времени стадии отображения (resize+putText+imshow+waitKey) =====
+        {
+            auto endTimeDisp = chrono::steady_clock::now();
+            auto durationDisp = chrono::duration_cast<chrono::microseconds>(endTimeDisp - startTimeDisp);
+            processingTimeImshow = (processingTimeImshow * 19.0 + durationDisp.count() / 1000.0) / 20.0;
+        }
+
+        // ===== Сводка производительности раз в секунду =====
+        auto nowStats = chrono::steady_clock::now();
+        long statsElapsedMs = chrono::duration_cast<chrono::milliseconds>(nowStats - lastStatsTime).count();
+        if (statsElapsedMs >= 1000) {
+            double dispFps = (statsElapsedMs > 0)
+                ? (displayedFrames - (lastStatsFrameId < 0 ? 0 : lastStatsFrameId)) * 1000.0 / statsElapsedMs
+                : 0.0;
+            lastStatsTime = nowStats;
+            lastStatsFrameId = displayedFrames;
+            cout << "[PERF] " << format("fps=%.1f | cap=%.1fms det+trk=%.1fms stab=%.1fms disp=%.1fms",
+                    dispFps, processingTimeCapture, processingTimeDetectionTracking,
+                    processingTimeStabilization, processingTimeImshow)
+                 << " | stab[upl=" << format("%.1f", processingTimeUpload)
+                 << " warp=" << format("%.1f", processingTimeWarp)
+                 << " dl=" << format("%.1f", processingTimeDownload) << "]ms"
+                 << " | rawQ=" << rawFramesQueue.size()
+                 << " procQ=" << processedFramesQueue.size()
+                 << " buf=" << frameBuffer.size()
+                 << " pts=" << trackedPoints.load()
+                 << " skip=" << framesSkipped.load() << endl;
+        }
     }
     
     if (writer.isOpened()) writer.release();
-    destroyWindow(windowName);
+    if (!noGui) destroyWindow(windowName);
     cout << "[DISPLAY] === Display thread stopped. Displayed " << displayedFrames << " frames. ===" << endl;
 } // end displayThread
 
@@ -1005,7 +1153,7 @@ void VideoStabilizer::removeFramePoints(vector<Point2f>& points, double minDista
 
 // ========================= IIR АДАПТИВНЫЙ ФИЛЬТР =========================
 void iirAdaptive(TransformParam& transformsFirstDerivative, TransformParam& transforms,
-                 TransformParam& transformSKO, UMat& stabMatrix,
+                 TransformParam& transformSKO, Mat& stabMatrix,
                  double& tauStab, Rect& roi, int a, int b, double& kSwitch) {
     if (abs(transformsFirstDerivative.dx) < 4.0 * transformSKO.dx + a / 8) {
         transforms.dx = kSwitch * (transforms.dx * (tauStab - 1.0) / tauStab + kSwitch * transformsFirstDerivative.dx);
@@ -1063,5 +1211,5 @@ void iirAdaptive(TransformParam& transformsFirstDerivative, TransformParam& tran
     transformSKO.dy = (1.0 - 0.1) * transformSKO.dy + 0.1 * abs(transformsFirstDerivative.dy);
     transformSKO.da = (1.0 - 0.1) * transformSKO.da + 0.1 * abs(transformsFirstDerivative.da);
 
-    transforms.getTransformInvert(stabMatrix);
+    transforms.getTransformInvertROI(stabMatrix, roi);
 } // end iirAdaptive

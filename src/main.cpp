@@ -71,7 +71,7 @@ int main() {
         cin.ignore();
         getline(cin, videoSource);
         if (videoSource.empty()) {
-            videoSource = "http://192.168.0.105:4747/video?500x500";
+            videoSource = "http://192.168.0.104:4747/video?500x500";
         }
         cout << "IP-камера: " << videoSource << endl;
     } else if (choice == 4) {
@@ -104,8 +104,11 @@ int main() {
     cout << "  S/W       - увеличить/уменьшить область кадра" << endl;
     cout << "  U/I       - увеличить/уменьшить коэффициент заполнения (D)" << endl;
     cout << "  J/K       - увеличить/уменьшить NSR" << endl;
-    if (useFP16) {
+    if (useFP16 && USE_FP16_WARP) {
         cout << "\n[GPU] FP16 оптимизация активирована" << endl;
+    } else if (useFP16) {
+        cout << "\n[GPU] FP16 недоступен на этой платформе (ядро half3 не собирается "
+             << "OpenCL-компилятором Mali) — работает обычный warpAffine" << endl;
     }
     
     try {

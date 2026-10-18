@@ -9,7 +9,7 @@
 
 // ========================= IIR АДАПТИВНЫЙ ФИЛЬТР =========================
 void iirAdaptive(TransformParam& transformsFirstDerivative, TransformParam& transforms,
-                 TransformParam& transformSKO, cv::UMat& stabMatrix,
+                 TransformParam& transformSKO, cv::Mat& stabMatrix,
                  double& tauStab, cv::Rect& roi, int a, int b, double& kSwitch);
 
 // ========================= СТАБИЛИЗАТОР =========================
@@ -56,12 +56,22 @@ private:
 
     // GPU оптимизация
     bool useFP16Warp{false};
+    bool useCpuWarp{false};   // VS_WARP_CPU=1 — считать warpAffine на CPU без upload/download на GPU
+    // VS_PINNED=1 — pinned оба буфера, 2 — только src (upload), 3 — только dst (download)
+    int pinnedMode{0};
+    // Переиспользуемые GPU-буферы (аллокация clCreateBuffer на каждом кадре стоит ~10 мс!)
+    cv::UMat gpuFrame;
+    cv::UMat gpuWarpDst;
 
     // Время обработки
     double processingTimeCapture = 0;
     double processingTimeDetectionTracking = 0;
     double processingTimeStabilization = 0;
     double processingTimeImshow = 0;
+    // Под-таймеры стадии стабилизации
+    double processingTimeUpload = 0;
+    double processingTimeWarp = 0;
+    double processingTimeDownload = 0;
 
     // Привязка ядер
     int captureCore;
