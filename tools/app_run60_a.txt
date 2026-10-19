@@ -1,0 +1,96 @@
+========================================
+ MULTI-THREADED VIDEO STABILIZER OPENCL 
+========================================
+CPU cores available: 6
+
+[EST] GPU не используется: стабилизация и отображение отключены
+Источник: камера /dev/video0
+Available CPU cores: 6
+Detector created with maxCorners=200
+Memory limits: Queue size=3, Frame buffer=4
+[THREADS] Потоков внутреннего пула OpenCV: 1 (по умолчанию для estimate-only — измерено, что так быстрее)
+[LOG] Построчный лог кадров: выкл (VS_VERBOSE=1 для включения)
+[WARP] Режим warpAffine: GPU (OpenCL)
+[WARP] GPU-буферы: VS_PINNED=2 (host memory)
+[STAB] Контур стабилизации: ВЫКЛ (VS_NO_STAB)
+[EST] Режим «только оценка смещения» (VS_ESTIMATE_ONLY): потоков 2 из 4 — захват сырого YUYV + трекинг; стабилизация и отображение не запускаются, resize=INTER_LINEAR
+Video stabilizer started with 2 threads
+
+[EST] Режим «только оценка смещения». Каждую секунду печатается:
+      fps | dx, dy (пиксели полного кадра) | da (радианы и градусы)
+      pts | det+trk | cap | rawQ | skip
+      VS_EST_VERBOSE=1 — печатать смещение на каждом кадре
+[CAP] === Capture thread started ===
+[CAP] Mode: Camera/Video
+[DETECT] === Detection and Tracking thread started (CPU only) ===
+[CAP] Requested 1920x1080 YUYV (raw, CONVERT_RGB=0)
+[CAP] ROI: x=288 y=162 w=1344 h=756
+Resolution: 1920x1080
+ROI: x=288 y=162 w=1344 h=756
+[EST] fps=38.8 | dx=+0.64 dy=+0.57 da=+0.00023 rad (0.013 deg) | pts=10 | det+trk=1.87ms cap=8.69ms (read=5.77 prep=2.92) rawQ=0 skip=1
+[EST] fps=113.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.64ms cap=8.51ms (read=5.77 prep=2.73) rawQ=0 skip=1
+[EST] fps=107.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=4 | det+trk=2.78ms cap=9.81ms (read=6.71 prep=3.08) rawQ=0 skip=1
+[EST] fps=108.1 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=3.04ms cap=9.17ms (read=6.54 prep=2.63) rawQ=0 skip=1
+[EST] fps=107.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.89ms cap=9.34ms (read=6.50 prep=2.83) rawQ=0 skip=1
+[EST] fps=110.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.68ms cap=8.89ms (read=6.31 prep=2.57) rawQ=0 skip=1
+[EST] fps=115.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.55ms cap=8.82ms (read=5.52 prep=3.30) rawQ=0 skip=1
+[EST] fps=114.1 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.60ms cap=8.71ms (read=6.23 prep=2.46) rawQ=0 skip=1
+[EST] fps=112.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.61ms cap=8.84ms (read=6.47 prep=2.36) rawQ=0 skip=1
+[EST] fps=113.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=4 | det+trk=2.60ms cap=8.94ms (read=6.40 prep=2.53) rawQ=0 skip=1
+[EST] fps=108.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.74ms cap=9.01ms (read=6.38 prep=2.62) rawQ=1 skip=1
+[EST] fps=112.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.62ms cap=9.39ms (read=6.12 prep=3.26) rawQ=1 skip=1
+[EST] fps=109.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.43ms cap=9.91ms (read=6.42 prep=3.17) rawQ=0 skip=1
+[EST] fps=99.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=4 | det+trk=2.65ms cap=9.82ms (read=5.82 prep=3.99) rawQ=0 skip=1
+[EST] fps=108.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.64ms cap=8.90ms (read=5.99 prep=2.71) rawQ=0 skip=1
+[EST] fps=113.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.80ms cap=8.43ms (read=5.62 prep=2.81) rawQ=0 skip=1
+[EST] fps=108.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.85ms cap=9.38ms (read=6.52 prep=2.84) rawQ=0 skip=1
+[EST] fps=108.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.75ms cap=9.43ms (read=6.34 prep=3.05) rawQ=0 skip=1
+[EST] fps=112.1 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.79ms cap=9.23ms (read=6.48 prep=2.75) rawQ=0 skip=1
+[EST] fps=110.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.80ms cap=8.67ms (read=5.77 prep=2.90) rawQ=0 skip=1
+[EST] fps=107.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.88ms cap=9.27ms (read=6.35 prep=2.91) rawQ=0 skip=1
+[EST] fps=111.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.95ms cap=8.92ms (read=6.23 prep=2.68) rawQ=0 skip=1
+[EST] fps=109.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.90ms cap=9.51ms (read=6.81 prep=2.67) rawQ=0 skip=1
+[EST] fps=106.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=4 | det+trk=3.00ms cap=8.91ms (read=6.04 prep=2.86) rawQ=1 skip=1
+[EST] fps=109.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.96ms cap=8.51ms (read=5.83 prep=2.67) rawQ=1 skip=1
+[EST] fps=110.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.71ms cap=8.58ms (read=5.75 prep=2.83) rawQ=0 skip=1
+[EST] fps=114.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.76ms cap=8.92ms (read=6.15 prep=2.76) rawQ=0 skip=1
+[EST] fps=110.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=4 | det+trk=2.49ms cap=9.00ms (read=6.24 prep=2.74) rawQ=1 skip=1
+[EST] fps=114.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.72ms cap=8.55ms (read=5.95 prep=2.52) rawQ=0 skip=1
+[EST] fps=107.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.57ms cap=9.29ms (read=6.63 prep=2.65) rawQ=1 skip=1
+[EST] fps=111.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.85ms cap=8.55ms (read=6.00 prep=2.50) rawQ=2 skip=1
+[EST] fps=112.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.75ms cap=8.77ms (read=6.16 prep=2.59) rawQ=0 skip=1
+[EST] fps=110.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.76ms cap=8.89ms (read=6.48 prep=2.40) rawQ=0 skip=1
+[EST] fps=110.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.55ms cap=8.64ms (read=5.95 prep=2.68) rawQ=0 skip=1
+[EST] fps=110.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.65ms cap=8.77ms (read=6.43 prep=2.34) rawQ=1 skip=1
+[EST] fps=111.3 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.72ms cap=9.42ms (read=6.69 prep=2.72) rawQ=1 skip=1
+[EST] fps=107.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=3.05ms cap=9.62ms (read=7.14 prep=2.47) rawQ=0 skip=1
+[EST] fps=111.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.86ms cap=9.00ms (read=5.98 prep=3.02) rawQ=0 skip=1
+[EST] fps=108.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=3.24ms cap=8.72ms (read=6.03 prep=2.68) rawQ=1 skip=1
+[EST] fps=113.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=3.14ms cap=8.97ms (read=6.17 prep=2.79) rawQ=0 skip=1
+[EST] fps=109.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=3.24ms cap=9.07ms (read=6.18 prep=2.89) rawQ=0 skip=1
+[EST] fps=111.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.93ms cap=9.05ms (read=6.42 prep=2.62) rawQ=0 skip=1
+[EST] fps=108.3 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=3.19ms cap=8.94ms (read=6.20 prep=2.73) rawQ=2 skip=1
+[EST] fps=113.3 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=3.02ms cap=9.09ms (read=6.27 prep=2.79) rawQ=0 skip=1
+[EST] fps=110.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=3.05ms cap=9.24ms (read=6.46 prep=2.77) rawQ=0 skip=1
+[EST] fps=114.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.80ms cap=8.48ms (read=5.81 prep=2.66) rawQ=0 skip=1
+[EST] fps=112.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.65ms cap=8.54ms (read=5.90 prep=2.63) rawQ=0 skip=1
+[EST] fps=112.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.47ms cap=9.10ms (read=6.72 prep=2.37) rawQ=0 skip=1
+[EST] fps=111.3 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.70ms cap=8.76ms (read=6.30 prep=2.45) rawQ=2 skip=1
+[EST] fps=115.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.68ms cap=8.71ms (read=6.00 prep=2.70) rawQ=0 skip=1
+[EST] fps=107.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.82ms cap=9.31ms (read=6.32 prep=2.98) rawQ=1 skip=1
+[EST] fps=111.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.68ms cap=9.01ms (read=6.50 prep=2.50) rawQ=1 skip=1
+[EST] fps=116.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.65ms cap=8.61ms (read=6.22 prep=2.38) rawQ=0 skip=1
+[EST] fps=110.3 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=4 | det+trk=2.67ms cap=8.79ms (read=6.03 prep=2.75) rawQ=0 skip=1
+[EST] fps=111.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.52ms cap=9.04ms (read=6.53 prep=2.50) rawQ=0 skip=1
+[EST] fps=110.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.62ms cap=9.03ms (read=6.01 prep=3.01) rawQ=0 skip=1
+[EST] fps=112.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.90ms cap=8.98ms (read=6.03 prep=2.92) rawQ=0 skip=1
+[EST] fps=108.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=3.14ms cap=9.25ms (read=6.62 prep=2.58) rawQ=0 skip=1
+[EST] fps=109.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.73ms cap=9.40ms (read=6.46 prep=2.93) rawQ=0 skip=1
+
+[RUN] Задано 60 с — останавливаемся
+[DETECT] === Detection and Tracking thread stopped. Processed 6566 frames. ===
+Capture thread stopped. Total frames captured: 24, Skipped: 2
+Video stabilizer stopped. Total frames processed: 0, Skipped: 2
+[EST] ИТОГО (end-to-end): 6566 кадров за 60.00 с = 109.43 fps
+Program finished successfully
+Video stabilizer stopped. Total frames processed: 0, Skipped: 2

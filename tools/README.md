@@ -27,12 +27,28 @@ $CXX -O3 -std=gnu++17 $INC make_pan_test.cpp -o /tmp/mkvideo $LIB
 
 # затем:
 ./build/myapp_modular --source /tmp/opencode/pan.mp4 --estimate-only --duration 10
+
+# 4. Доказательство частоты кадров через тот же VideoCapture, что и в приложении.
+#    Фаза A (пустой цикл) показывает, что «8 мс» — это ПЕРИОД СЕНСОРА, на котором
+#    блокируется read(); фаза B (путь приложения) — что внутри busy-цикла кадр уже
+#    готов и read() дешевле; фаза C — побайтовая проверка, что драйвер НЕ повторяет
+#    один и тот же буфер (fps не завышен счётом дубликатов).
+$CXX -O3 -std=gnu++17 $INC verify_fps.cpp -o /tmp/verify_fps $LIB
+taskset -c 4-5 /tmp/verify_fps 12     # по 12 с на фазы A и B, 5 с на фазу C
 ```
+
+## Сквозная проверка в самом приложении
+
+В режиме estimate-only приложение печатает в конце строку
+`[EST] ИТОГО (end-to-end): N кадров за T с = X fps` — это полное число кадров,
+прошедших через поток детектирования, делённое на фактическое время работы.
 
 ## Логи замеров
 
 - `probe_capture_out.txt` — изолированные стоимости стадий захвата (пути A/B/C).
 - `probe_gray_path.cpp` — доказательство эквивалентности быстрого пути серого.
+- `verify_fps.cpp` — независимое доказательство fps и отсутствия дублей кадров.
+- `lightdiag_600.txt` — сырой V4L2 (без OpenCV), таймстампы драйвера: 119 fps.
 - `ocv_threads_sweep.txt` — свип `VS_OCV_THREADS` (1/2/3/4/6) в estimate-only.
 - `ab_estimate_only_results.txt` — перекрёстный A/B: estimate-only против
   `--no-stab --no-gui`, по 3 репа round-robin.

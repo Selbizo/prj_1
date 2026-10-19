@@ -5,6 +5,7 @@
 #include "utils/helpers.h"
 
 #include <iostream>
+#include <iomanip>
 #include <thread>
 #include <chrono>
 #include <string>
@@ -210,6 +211,8 @@ int main(int argc, char** argv) {
         }
     } // end else: обычный (интерактивный) режим
     
+    // Время фактической работы конвейера — знаменатель для end-to-end fps в main.
+    auto runStart = chrono::steady_clock::now();
     try {
         if (runSeconds > 0.0) {
             // Детерминированный прогон для замеров: ждём заданное время и гасим конвейер.
@@ -230,7 +233,16 @@ int main(int argc, char** argv) {
         cout << "Main thread interrupted" << endl;
     }
     
+    auto runEnd = chrono::steady_clock::now();
     stabilizer.stop();
+    if (estimateOnlyArg) {
+        double runSecs = chrono::duration<double>(runEnd - runStart).count();
+        long long n = stabilizer.estimateFramesTotal.load();
+        double fps = (runSecs > 0.0) ? static_cast<double>(n) / runSecs : 0.0;
+        cout << "[EST] ИТОГО (end-to-end): " << n << " кадров за "
+             << fixed << setprecision(2) << runSecs << " с = "
+             << setprecision(2) << fps << " fps" << endl;
+    }
     cout << "Program finished successfully" << endl;
     return 0;
 }

@@ -1,0 +1,12 @@
+requesting 1920x1080  N=600
+got fmt: 1920x1080  bytesperline=3840 sizeimage=4147200
+buf len[0] = 4147200
+
+frames: 600   pollfail: 0
+unique: 599
+span:   5.027 s
+avg fps: 119.16
+interval min:    865 us
+interval median: 8318 us  (120.22 fps)
+interval p95:    10987 us
+interval max:    26865 us

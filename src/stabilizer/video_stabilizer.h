@@ -101,6 +101,11 @@ public:
     // Это самый быстрый путь: упирается в пропускную способность сенсора.
     bool estimateOnly{false};
 
+    // Суммарно обработанных кадров за всё время работы в режиме estimate-only
+    // (в отличие от estFrameCount, который сбрасывается каждую секунду). По нему
+    // main печатает end-to-end fps: N кадров / фактическое время работы.
+    std::atomic<long long> estimateFramesTotal{0};
+
     VideoStabilizer();
     ~VideoStabilizer();
 

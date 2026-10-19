@@ -604,6 +604,7 @@ void VideoStabilizer::detectionAndTrackingThread() {
         if (estimateOnly) {
             estLast = fd.transformFirstDerivative;
             estFrameCount++;
+            estimateFramesTotal++;
             if (estPerFrame) {
                 cout << format("[EST] frame=%d dx=%+.2f dy=%+.2f da=%+.5f rad pts=%d",
                         fd.frameId, estLast.dx, estLast.dy, estLast.da,
