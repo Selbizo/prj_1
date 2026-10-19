@@ -8,6 +8,7 @@
 #include <thread>
 #include <chrono>
 #include <string>
+#include <cstdlib>
 
 using namespace std;
 
@@ -28,10 +29,18 @@ static void printUsage(const char* prog) {
          << "                     http://... | rtsp://… — IP-камера\n"
          << "                     /path/to/dir          — папка с кадрами\n"
          << "                     /path/to/file.mp4     — видеофайл\n"
+         << "  --estimate-only  только вычисление смещения (максимальный fps):\n"
+         << "                     два потока (захват + трекинг), без стабилизации\n"
+         << "                     и отображения; камера читается сырым YUYV.\n"
+         << "                     Каждую секунду печатается строка [EST] с dx/dy/da.\n"
+         << "  --duration <sec>  работать заданное число секунд и корректно выйти\n"
          << "  --no-stab        стартовать без контура стабилизации (пиковый fps)\n"
-         << "  --no-gui         без окна (в консоль идут только строки [PERF])\n"
+         << "  --no-gui         без окна (в консоль идут только строки [PERF]/[EST])\n"
          << "  -h, --help       эта справка\n\n"
-         << "Без --source показывается интерактивное меню, как раньше.\n";
+         << "Без --source показывается интерактивное меню, как раньше.\n"
+         << "Переменные окружения: VS_ESTIMATE_ONLY, VS_NO_STAB, VS_NO_GUI,\n"
+         << "  VS_FAST_RESIZE, VS_OCV_THREADS, VS_PINNED, VS_WARP_CPU, VS_VERBOSE,\n"
+         << "  VS_EST_VERBOSE.\n";
 } // end printUsage
 
 // ========================= ГЛАВНАЯ ФУНКЦИЯ =========================
@@ -48,10 +57,18 @@ int main(int argc, char** argv) {
     // Разбор аргументов. --no-stab / --no-gui выставляют те же переменные среды,
     // которые читает VideoStabilizer, поэтому поведение совпадает с env-вариантом.
     string sourceArg;
+    double runSeconds = 0.0;
+    bool estimateOnlyArg = false;
     for (int i = 1; i < argc; i++) {
         string arg = argv[i];
         if (arg == "--source" && i + 1 < argc) {
             sourceArg = argv[++i];
+        } else if (arg == "--duration" && i + 1 < argc) {
+            runSeconds = atof(argv[++i]);
+        } else if (arg == "--estimate-only") {
+            estimateOnlyArg = true;
+            setenv("VS_ESTIMATE_ONLY", "1", 1);
+            setenv("VS_NO_GUI", "1", 1);
         } else if (arg == "--no-stab") {
             setenv("VS_NO_STAB", "1", 1);
         } else if (arg == "--no-gui") {
@@ -66,14 +83,21 @@ int main(int argc, char** argv) {
         }
     }
     
-    // Обнаружить возможности GPU
-    cout << "\n[ИНИЦИАЛИЗАЦИЯ GPU]" << endl;
-    GPUCapabilities gpuCaps = detectGPUCapabilities();
-    bool useFP16 = gpuCaps.supportsFP16 || gpuCaps.supportsHalfType;
-    if (!useFP16) {
-        cout << "[GPU] Предупреждение: FP16 недоступен, используется стандартная обработка" << endl;
+    // Обнаружить возможности GPU. В режиме «только оценка смещения» GPU не нужен
+    // (нет warpAffine), поэтому инициализацию OpenCL пропускаем — она заметно
+    // тормозит старт и может тянуть фоновые потоки драйвера.
+    bool useFP16 = false;
+    if (!estimateOnlyArg) {
+        cout << "\n[ИНИЦИАЛИЗАЦИЯ GPU]" << endl;
+        GPUCapabilities gpuCaps = detectGPUCapabilities();
+        useFP16 = gpuCaps.supportsFP16 || gpuCaps.supportsHalfType;
+        if (!useFP16) {
+            cout << "[GPU] Предупреждение: FP16 недоступен, используется стандартная обработка" << endl;
+        }
+        cout << endl;
+    } else {
+        cout << "\n[EST] GPU не используется: стабилизация и отображение отключены" << endl;
     }
-    cout << endl;
     
     bool useVideo = true;
     string imageFolderPath;
@@ -162,26 +186,46 @@ int main(int argc, char** argv) {
     stabilizer.setUseFP16(useFP16);
     stabilizer.start(useVideo, imageFolderPath);
     
-    cout << "\nУправление:" << endl;
-    cout << "  ESC или Q - выход" << endl;
-    cout << "  Пробел   - пауза" << endl;
-    cout << "  F         - сохранить текущий кадр" << endl;
-    cout << "  D         - переключить режим отладки" << endl;
-    cout << "  B         - вкл/выкл контур стабилизации (пиковый fps)" << endl;
-    cout << "  S/W       - увеличить/уменьшить область кадра" << endl;
-    cout << "  U/I       - увеличить/уменьшить коэффициент заполнения (D)" << endl;
-    cout << "  J/K       - увеличить/уменьшить NSR" << endl;
-    if (useFP16 && USE_FP16_WARP) {
-        cout << "\n[GPU] FP16 оптимизация активирована" << endl;
-    } else if (useFP16) {
-        cout << "\n[GPU] FP16 недоступен на этой платформе (ядро half3 не собирается "
-             << "OpenCL-компилятором Mali) — работает обычный warpAffine" << endl;
-    }
+    if (estimateOnlyArg) {
+        cout << "\n[EST] Режим «только оценка смещения». Каждую секунду печатается:"
+             << "\n      fps | dx, dy (пиксели полного кадра) | da (радианы и градусы)"
+             << "\n      pts | det+trk | cap | rawQ | skip"
+             << "\n      VS_EST_VERBOSE=1 — печатать смещение на каждом кадре"
+             << (runSeconds > 0 ? "" : "\n      Остановка: Ctrl-C (или задайте --duration <сек>)") << endl;
+    } else {
+        cout << "\nУправление:" << endl;
+        cout << "  ESC или Q - выход" << endl;
+        cout << "  Пробел   - пауза" << endl;
+        cout << "  F         - сохранить текущий кадр" << endl;
+        cout << "  D         - переключить режим отладки" << endl;
+        cout << "  B         - вкл/выкл контур стабилизации (пиковый fps)" << endl;
+        cout << "  S/W       - увеличить/уменьшить область кадра" << endl;
+        cout << "  U/I       - увеличить/уменьшить коэффициент заполнения (D)" << endl;
+        cout << "  J/K       - увеличить/уменьшить NSR" << endl;
+        if (useFP16 && USE_FP16_WARP) {
+            cout << "\n[GPU] FP16 оптимизация активирована" << endl;
+        } else if (useFP16) {
+            cout << "\n[GPU] FP16 недоступен на этой платформе (ядро half3 не собирается "
+                 << "OpenCL-компилятором Mali) — работает обычный warpAffine" << endl;
+        }
+    } // end else: обычный (интерактивный) режим
     
     try {
-        while (stabilizer.running) {
-            this_thread::sleep_for(chrono::seconds(1));
-        }
+        if (runSeconds > 0.0) {
+            // Детерминированный прогон для замеров: ждём заданное время и гасим конвейер.
+            auto deadline = chrono::steady_clock::now() + chrono::milliseconds(static_cast<long>(runSeconds * 1000.0));
+            while (stabilizer.running && chrono::steady_clock::now() < deadline) {
+                this_thread::sleep_for(chrono::milliseconds(100));
+            } // end while (running && now < deadline)
+            if (stabilizer.running) {
+                cout << "\n[RUN] Задано " << runSeconds << " с — останавливаемся" << endl;
+                stabilizer.running = false;
+            } // end if (running)
+        } else {
+            while (stabilizer.running) {
+                this_thread::sleep_for(chrono::seconds(1));
+            } // end while (running)
+        } // end else: без ограничения по времени
     } catch (...) {
         cout << "Main thread interrupted" << endl;
     }

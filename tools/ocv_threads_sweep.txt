@@ -1,0 +1,130 @@
+### round1 VS_OCV_THREADS=1
+[EST] fps=64.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=1.72ms cap=8.42ms (read=6.07 prep=2.35) rawQ=0 skip=0
+[EST] fps=116.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=2.83ms cap=8.75ms (read=6.30 prep=2.45) rawQ=0 skip=0
+[EST] fps=112.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.04ms cap=9.13ms (read=6.76 prep=2.37) rawQ=0 skip=0
+[EST] fps=114.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.29ms cap=8.73ms (read=6.29 prep=2.43) rawQ=0 skip=0
+[EST] fps=112.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.27ms cap=8.41ms (read=5.98 prep=2.43) rawQ=1 skip=0
+[EST] fps=116.7 | dx=-1.47 dy=-5.59 da=+0.00870 rad (0.498 deg) | pts=11 | det+trk=3.19ms cap=8.91ms (read=6.50 prep=2.40) rawQ=0 skip=0
+[EST] fps=115.8 | dx=+3.57 dy=+0.93 da=+0.00004 rad (0.002 deg) | pts=30 | det+trk=3.18ms cap=8.46ms (read=6.07 prep=2.39) rawQ=0 skip=0
+[EST] fps=116.1 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.26ms cap=8.73ms (read=6.36 prep=2.36) rawQ=0 skip=0
+[EST] fps=112.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=3.14ms cap=8.86ms (read=5.99 prep=2.87) rawQ=0 skip=0
+[EST] fps=116.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=2.99ms cap=8.94ms (read=6.64 prep=2.29) rawQ=0 skip=0
+[EST] fps=113.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.09ms cap=8.72ms (read=6.36 prep=2.36) rawQ=0 skip=0
+
+### round1 VS_OCV_THREADS=2
+[EST] fps=65.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=1.39ms cap=9.25ms (read=6.52 prep=2.73) rawQ=0 skip=0
+[EST] fps=109.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=2.49ms cap=9.28ms (read=6.53 prep=2.75) rawQ=0 skip=0
+[EST] fps=110.1 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=2.90ms cap=8.58ms (read=6.10 prep=2.48) rawQ=1 skip=0
+[EST] fps=112.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.01ms cap=8.71ms (read=6.25 prep=2.45) rawQ=2 skip=0
+[EST] fps=119.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=2.84ms cap=8.30ms (read=5.86 prep=2.44) rawQ=0 skip=0
+[EST] fps=114.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.89ms cap=8.67ms (read=6.22 prep=2.44) rawQ=0 skip=0
+[EST] fps=109.1 | dx=-5.29 dy=-0.40 da=+0.00113 rad (0.064 deg) | pts=14 | det+trk=2.93ms cap=8.93ms (read=6.52 prep=2.40) rawQ=0 skip=0
+[EST] fps=113.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=2.79ms cap=8.55ms (read=6.13 prep=2.41) rawQ=0 skip=0
+[EST] fps=112.9 | dx=-0.45 dy=+4.50 da=-0.01015 rad (-0.581 deg) | pts=6 | det+trk=2.94ms cap=8.73ms (read=6.29 prep=2.44) rawQ=0 skip=0
+[EST] fps=114.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=2.86ms cap=8.32ms (read=5.85 prep=2.47) rawQ=1 skip=0
+[EST] fps=113.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=2.84ms cap=9.13ms (read=6.69 prep=2.43) rawQ=0 skip=0
+
+### round1 VS_OCV_THREADS=3
+[EST] fps=68.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=4 | det+trk=1.57ms cap=9.04ms (read=6.54 prep=2.49) rawQ=0 skip=0
+[EST] fps=105.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=2.69ms cap=9.41ms (read=6.49 prep=2.91) rawQ=0 skip=0
+[EST] fps=107.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=5 | det+trk=3.19ms cap=8.85ms (read=6.13 prep=2.71) rawQ=0 skip=0
+[EST] fps=107.8 | dx=-4.36 dy=+6.56 da=-0.02717 rad (-1.557 deg) | pts=10 | det+trk=3.54ms cap=9.10ms (read=6.64 prep=2.46) rawQ=0 skip=0
+[EST] fps=105.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=5 | det+trk=3.52ms cap=9.30ms (read=6.88 prep=2.42) rawQ=0 skip=0
+[EST] fps=106.0 | dx=-6.03 dy=-0.69 da=-0.00240 rad (-0.137 deg) | pts=10 | det+trk=3.52ms cap=9.19ms (read=6.30 prep=2.89) rawQ=0 skip=0
+[EST] fps=106.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.54ms cap=9.28ms (read=6.32 prep=2.96) rawQ=0 skip=0
+[EST] fps=112.3 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=3.41ms cap=8.51ms (read=5.94 prep=2.55) rawQ=0 skip=0
+[EST] fps=112.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.50ms cap=8.60ms (read=6.22 prep=2.38) rawQ=0 skip=0
+[EST] fps=111.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=3.31ms cap=9.02ms (read=6.63 prep=2.39) rawQ=0 skip=0
+[EST] fps=113.0 | dx=-0.90 dy=-2.73 da=+0.00171 rad (0.098 deg) | pts=30 | det+trk=3.46ms cap=8.91ms (read=6.47 prep=2.43) rawQ=1 skip=0
+
+### round1 VS_OCV_THREADS=4
+[EST] fps=68.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=1.68ms cap=8.43ms (read=6.07 prep=2.35) rawQ=0 skip=0
+[EST] fps=111.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=2.89ms cap=9.19ms (read=6.79 prep=2.39) rawQ=0 skip=0
+[EST] fps=108.3 | dx=-2.99 dy=-6.42 da=-0.00658 rad (-0.377 deg) | pts=11 | det+trk=3.31ms cap=9.84ms (read=6.79 prep=3.05) rawQ=0 skip=0
+[EST] fps=106.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.63ms cap=9.53ms (read=6.79 prep=2.74) rawQ=0 skip=0
+[EST] fps=108.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=3.44ms cap=9.27ms (read=6.37 prep=2.90) rawQ=0 skip=0
+[EST] fps=103.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=3.59ms cap=9.83ms (read=6.87 prep=2.96) rawQ=0 skip=0
+[EST] fps=104.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.71ms cap=9.99ms (read=6.59 prep=3.40) rawQ=0 skip=0
+[EST] fps=106.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.78ms cap=9.48ms (read=6.37 prep=3.11) rawQ=0 skip=0
+[EST] fps=108.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=3.78ms cap=9.42ms (read=6.85 prep=2.58) rawQ=0 skip=0
+[EST] fps=108.5 | dx=-0.62 dy=-1.51 da=+0.00220 rad (0.126 deg) | pts=30 | det+trk=3.78ms cap=9.12ms (read=6.58 prep=2.53) rawQ=0 skip=0
+[EST] fps=105.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.64ms cap=9.50ms (read=6.58 prep=2.92) rawQ=0 skip=0
+
+### round1 VS_OCV_THREADS=6
+[EST] fps=60.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=1.74ms cap=9.35ms (read=6.47 prep=2.87) rawQ=0 skip=0
+[EST] fps=106.7 | dx=-11.83 dy=-2.01 da=+0.00321 rad (0.184 deg) | pts=8 | det+trk=3.14ms cap=9.37ms (read=6.94 prep=2.43) rawQ=0 skip=0
+[EST] fps=104.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.84ms cap=9.50ms (read=7.00 prep=2.50) rawQ=0 skip=0
+[EST] fps=113.1 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=3.78ms cap=9.18ms (read=6.72 prep=2.46) rawQ=0 skip=0
+[EST] fps=107.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.99ms cap=9.60ms (read=7.20 prep=2.40) rawQ=0 skip=0
+[EST] fps=108.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=4.08ms cap=8.67ms (read=6.09 prep=2.58) rawQ=1 skip=0
+[EST] fps=106.9 | dx=-7.13 dy=+13.53 da=+0.00243 rad (0.139 deg) | pts=10 | det+trk=4.00ms cap=9.60ms (read=7.09 prep=2.50) rawQ=0 skip=0
+[EST] fps=108.2 | dx=+2.95 dy=-4.85 da=+0.00237 rad (0.136 deg) | pts=8 | det+trk=4.01ms cap=9.39ms (read=6.55 prep=2.84) rawQ=0 skip=0
+[EST] fps=111.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.64ms cap=8.68ms (read=6.09 prep=2.59) rawQ=1 skip=0
+[EST] fps=107.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=3.65ms cap=9.42ms (read=6.44 prep=2.98) rawQ=0 skip=0
+[EST] fps=106.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.74ms cap=8.82ms (read=6.14 prep=2.68) rawQ=1 skip=0
+
+### round2 VS_OCV_THREADS=1
+[EST] fps=66.9 | dx=+21.28 dy=+2.09 da=-0.01782 rad (-1.021 deg) | pts=15 | det+trk=1.48ms cap=8.58ms (read=6.26 prep=2.32) rawQ=0 skip=0
+[EST] fps=111.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=2.59ms cap=8.84ms (read=6.43 prep=2.41) rawQ=0 skip=0
+[EST] fps=112.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=2.95ms cap=8.68ms (read=6.24 prep=2.43) rawQ=0 skip=0
+[EST] fps=115.0 | dx=-1.74 dy=-1.65 da=+0.00234 rad (0.134 deg) | pts=30 | det+trk=3.14ms cap=8.67ms (read=6.26 prep=2.41) rawQ=0 skip=0
+[EST] fps=112.3 | dx=+5.96 dy=+0.20 da=-0.00077 rad (-0.044 deg) | pts=10 | det+trk=3.28ms cap=9.15ms (read=6.75 prep=2.40) rawQ=0 skip=0
+[EST] fps=115.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=3.21ms cap=8.69ms (read=6.24 prep=2.44) rawQ=0 skip=0
+[EST] fps=116.9 | dx=-4.97 dy=-3.00 da=-0.00334 rad (-0.191 deg) | pts=15 | det+trk=3.36ms cap=8.58ms (read=6.15 prep=2.43) rawQ=0 skip=0
+[EST] fps=114.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.34ms cap=8.70ms (read=6.29 prep=2.41) rawQ=0 skip=0
+[EST] fps=117.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.23ms cap=8.35ms (read=5.90 prep=2.44) rawQ=0 skip=0
+[EST] fps=115.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=4 | det+trk=3.29ms cap=8.76ms (read=6.34 prep=2.42) rawQ=0 skip=0
+[EST] fps=113.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=3.33ms cap=8.61ms (read=6.19 prep=2.42) rawQ=0 skip=0
+
+### round2 VS_OCV_THREADS=2
+[EST] fps=69.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=1.32ms cap=8.25ms (read=6.05 prep=2.20) rawQ=0 skip=0
+[EST] fps=111.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.43ms cap=8.91ms (read=6.45 prep=2.46) rawQ=0 skip=0
+[EST] fps=102.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.03ms cap=10.02ms (read=7.50 prep=2.51) rawQ=1 skip=0
+[EST] fps=109.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=3.02ms cap=9.07ms (read=6.58 prep=2.49) rawQ=0 skip=0
+[EST] fps=114.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=2.88ms cap=8.87ms (read=6.53 prep=2.34) rawQ=0 skip=0
+[EST] fps=110.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=2.89ms cap=8.55ms (read=6.20 prep=2.35) rawQ=0 skip=0
+[EST] fps=109.3 | dx=-1.72 dy=+3.40 da=-0.00173 rad (-0.099 deg) | pts=9 | det+trk=3.06ms cap=8.98ms (read=6.41 prep=2.56) rawQ=0 skip=0
+[EST] fps=114.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.02ms cap=8.89ms (read=6.48 prep=2.41) rawQ=0 skip=0
+[EST] fps=115.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.97ms cap=8.56ms (read=6.11 prep=2.45) rawQ=0 skip=0
+[EST] fps=112.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=2.97ms cap=8.84ms (read=6.43 prep=2.41) rawQ=1 skip=0
+[EST] fps=121.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=2.99ms cap=8.29ms (read=5.89 prep=2.40) rawQ=0 skip=0
+
+### round2 VS_OCV_THREADS=3
+[EST] fps=63.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=1.50ms cap=8.46ms (read=6.13 prep=2.33) rawQ=0 skip=0
+[EST] fps=112.0 | dx=-2.05 dy=+2.19 da=-0.00667 rad (-0.382 deg) | pts=6 | det+trk=2.77ms cap=8.92ms (read=6.53 prep=2.39) rawQ=0 skip=0
+[EST] fps=115.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=3.15ms cap=8.92ms (read=6.51 prep=2.41) rawQ=0 skip=0
+[EST] fps=114.9 | dx=+1.17 dy=+0.58 da=-0.00149 rad (-0.085 deg) | pts=30 | det+trk=3.36ms cap=8.86ms (read=6.45 prep=2.41) rawQ=0 skip=0
+[EST] fps=115.3 | dx=+39.73 dy=-55.22 da=+0.11892 rad (6.814 deg) | pts=6 | det+trk=3.42ms cap=8.48ms (read=6.00 prep=2.47) rawQ=0 skip=0
+[EST] fps=108.3 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=3.45ms cap=9.49ms (read=7.00 prep=2.49) rawQ=0 skip=0
+[EST] fps=109.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=3.42ms cap=9.76ms (read=7.36 prep=2.40) rawQ=0 skip=0
+[EST] fps=110.9 | dx=+4.78 dy=-4.91 da=+0.00089 rad (0.051 deg) | pts=9 | det+trk=3.42ms cap=9.10ms (read=6.64 prep=2.45) rawQ=0 skip=0
+[EST] fps=112.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=3.36ms cap=8.91ms (read=6.49 prep=2.41) rawQ=0 skip=0
+[EST] fps=112.5 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.32ms cap=8.44ms (read=6.00 prep=2.43) rawQ=0 skip=0
+[EST] fps=110.1 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.38ms cap=9.36ms (read=6.93 prep=2.43) rawQ=0 skip=0
+
+### round2 VS_OCV_THREADS=4
+[EST] fps=66.9 | dx=-10.34 dy=-3.69 da=-0.01326 rad (-0.760 deg) | pts=7 | det+trk=1.66ms cap=8.95ms (read=6.43 prep=2.52) rawQ=0 skip=0
+[EST] fps=111.9 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=2.87ms cap=8.57ms (read=6.27 prep=2.29) rawQ=1 skip=0
+[EST] fps=107.2 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.38ms cap=9.35ms (read=6.45 prep=2.90) rawQ=1 skip=0
+[EST] fps=108.0 | dx=+9.62 dy=+6.35 da=-0.03553 rad (-2.035 deg) | pts=6 | det+trk=3.57ms cap=9.67ms (read=6.84 prep=2.83) rawQ=0 skip=0
+[EST] fps=103.6 | dx=-1.08 dy=-0.07 da=+0.00085 rad (0.049 deg) | pts=30 | det+trk=3.63ms cap=9.75ms (read=7.12 prep=2.63) rawQ=0 skip=0
+[EST] fps=99.5 | dx=+33.18 dy=-10.04 da=+0.00548 rad (0.314 deg) | pts=6 | det+trk=3.82ms cap=9.20ms (read=6.26 prep=2.93) rawQ=0 skip=0
+[EST] fps=106.3 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=2 | det+trk=3.93ms cap=9.58ms (read=7.06 prep=2.51) rawQ=0 skip=0
+[EST] fps=111.8 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=3 | det+trk=3.88ms cap=8.78ms (read=6.18 prep=2.59) rawQ=0 skip=0
+[EST] fps=108.6 | dx=-2.23 dy=-3.42 da=-0.00258 rad (-0.148 deg) | pts=13 | det+trk=3.83ms cap=9.52ms (read=7.03 prep=2.48) rawQ=0 skip=0
+[EST] fps=108.0 | dx=+0.05 dy=+1.56 da=+0.00189 rad (0.108 deg) | pts=30 | det+trk=3.95ms cap=9.78ms (read=7.24 prep=2.54) rawQ=0 skip=0
+[EST] fps=110.3 | dx=-11.65 dy=-8.06 da=+0.03444 rad (1.974 deg) | pts=6 | det+trk=3.77ms cap=9.30ms (read=6.85 prep=2.45) rawQ=0 skip=0
+
+### round2 VS_OCV_THREADS=6
+[EST] fps=63.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=1.94ms cap=9.04ms (read=6.64 prep=2.39) rawQ=0 skip=0
+[EST] fps=105.9 | dx=-0.97 dy=+0.86 da=-0.00084 rad (-0.048 deg) | pts=30 | det+trk=3.36ms cap=9.27ms (read=6.58 prep=2.69) rawQ=1 skip=0
+[EST] fps=109.8 | dx=-1.11 dy=-3.91 da=+0.00114 rad (0.065 deg) | pts=12 | det+trk=3.48ms cap=9.29ms (read=6.41 prep=2.88) rawQ=0 skip=0
+[EST] fps=106.7 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=3.85ms cap=9.44ms (read=6.38 prep=3.06) rawQ=1 skip=0
+[EST] fps=107.6 | dx=-5.54 dy=-0.95 da=+0.00251 rad (0.144 deg) | pts=30 | det+trk=3.96ms cap=9.04ms (read=6.26 prep=2.78) rawQ=0 skip=0
+[EST] fps=110.7 | dx=-3.45 dy=-1.40 da=+0.00041 rad (0.024 deg) | pts=30 | det+trk=3.85ms cap=9.40ms (read=6.70 prep=2.70) rawQ=0 skip=0
+[EST] fps=107.0 | dx=-0.20 dy=-1.88 da=+0.00253 rad (0.145 deg) | pts=30 | det+trk=3.88ms cap=9.74ms (read=6.59 prep=3.14) rawQ=0 skip=0
+[EST] fps=106.9 | dx=+3.44 dy=+3.28 da=-0.00114 rad (-0.065 deg) | pts=30 | det+trk=4.00ms cap=9.02ms (read=6.23 prep=2.79) rawQ=0 skip=0
+[EST] fps=106.4 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=4 | det+trk=3.90ms cap=9.40ms (read=6.22 prep=3.18) rawQ=0 skip=0
+[EST] fps=104.6 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=0 | det+trk=4.05ms cap=9.38ms (read=6.72 prep=2.66) rawQ=2 skip=0
+[EST] fps=106.0 | dx=+0.00 dy=+0.00 da=+0.00000 rad (0.000 deg) | pts=1 | det+trk=4.15ms cap=9.83ms (read=6.97 prep=2.86) rawQ=0 skip=0
+

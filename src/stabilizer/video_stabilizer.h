@@ -68,6 +68,10 @@ private:
     double processingTimeDetectionTracking = 0;
     double processingTimeStabilization = 0;
     double processingTimeImshow = 0;
+    // Под-таймеры стадии захвата (режим «только оценка смещения»): сколько
+    // занимает сам cap.read() и сколько — распаковка YUYV + уменьшение до 384x216.
+    double processingTimeCapRead = 0;
+    double processingTimeCapPrep = 0;
     // Под-таймеры стадии стабилизации
     double processingTimeUpload = 0;
     double processingTimeWarp = 0;
@@ -88,6 +92,14 @@ public:
     // Переключается на лету клавишей B или на старте переменной VS_NO_STAB=1.
     // При выключении кадр отдаётся как есть (без компенсации движения).
     std::atomic<bool> stabilizationEnabled{true};
+
+    // Режим «только оценка смещения» (VS_ESTIMATE_ONLY=1, CLI --estimate-only).
+    // Запускаются ровно два потока — захват и детектирование/трекинг; контур
+    // стабилизации и поток отображения не создаются. Кадр с камеры берётся сырым
+    // (YUYV, CAP_PROP_CONVERT_RGB=0) и сразу приводится к серому 384x216, полный
+    // BGR-кадр не материализуется. На выходе — dx, dy, da на кадр (строка [EST]).
+    // Это самый быстрый путь: упирается в пропускную способность сенсора.
+    bool estimateOnly{false};
 
     VideoStabilizer();
     ~VideoStabilizer();

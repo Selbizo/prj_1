@@ -126,6 +126,40 @@ VideoStabilizer::VideoStabilizer()
     // VS_NO_STAB=1 — стартовать с выключенным контуром стабилизации (пиковый fps).
     const char* noStab = getenv("VS_NO_STAB");
     stabilizationEnabled = !(noStab != nullptr && string(noStab) != "0");
+    // VS_ESTIMATE_ONLY=1 — только вычисление смещения: два потока (захват + трекинг),
+    // без контура стабилизации и без потока отображения, камера читается сырым YUYV.
+    const char* estOnly = getenv("VS_ESTIMATE_ONLY");
+    estimateOnly = (estOnly != nullptr && string(estOnly) != "0");
+    if (estimateOnly) {
+        stabilizationEnabled = false;
+        // Для трекинга на 384x216 INTER_LINEAR эквивалентен INTER_AREA по качеству,
+        // но в ~8 раз дешевле (0.5 мс против 4.5 мс, измерено). Item 2 плана.
+        captureResizeInterp = INTER_LINEAR;
+    } // end if (estimateOnly)
+    // Число потоков внутреннего пула OpenCV. В конвейере работают несколько
+    // потоков приложения, и каждый вызывает parallel_for_ — пул по умолчанию
+    // (по числу ядер) даёт оверсабскрипшн, и операции идут медленнее, чем
+    // изолированно. Измерено на 2-поточном estimate-only (медианы fps):
+    //   пул=1 -> 115.0, 2 -> 112.9, 3 -> 111.6, 4 -> 108.3, 6 -> 107.0
+    // Задачи здесь маленькие и упираются в память, поэтому параллелизм внутри
+    // одной операции только мешает: по умолчанию в estimate-only ставим 1.
+    // VS_OCV_THREADS=N переопределяет, VS_OCV_THREADS=0 оставляет как есть.
+    int ocvThreadsNum = estimateOnly ? 1 : 0;
+    const char* ocvThreads = getenv("VS_OCV_THREADS");
+    if (ocvThreads != nullptr) {
+        int n = atoi(ocvThreads);
+        ocvThreadsNum = (n > 0) ? n : 0;
+    } // end if (ocvThreads != nullptr)
+    if (ocvThreadsNum > 0) {
+        cv::setNumThreads(ocvThreadsNum);
+        cout << "[THREADS] Потоков внутреннего пула OpenCV: " << ocvThreadsNum
+             << (estimateOnly && ocvThreads == nullptr
+                 ? " (по умолчанию для estimate-only — измерено, что так быстрее)"
+                 : "") << endl;
+    } else {
+        cout << "[THREADS] Потоков внутреннего пула OpenCV: " << cv::getNumThreads()
+             << " (по умолчанию)" << endl;
+    } // end else: пул не переопределён
     cout << "[LOG] Построчный лог кадров: " << (gVerbose ? "ВКЛ (VS_VERBOSE)" : "выкл (VS_VERBOSE=1 для включения)") << endl;
     cout << "[WARP] Режим warpAffine: " << (useCpuWarp ? "CPU" : "GPU (OpenCL)") << endl;
     if (!useCpuWarp) {
@@ -134,6 +168,11 @@ VideoStabilizer::VideoStabilizer()
     } // end if (!useCpuWarp)
     cout << "[STAB] Контур стабилизации: "
          << (stabilizationEnabled.load() ? "ВКЛ (клавиша B — выключить)" : "ВЫКЛ (VS_NO_STAB)") << endl;
+    if (estimateOnly) {
+        cout << "[EST] Режим «только оценка смещения» (VS_ESTIMATE_ONLY): потоков 2 из 4 — "
+             << "захват сырого YUYV + трекинг; стабилизация и отображение не запускаются"
+             << (captureResizeInterp == INTER_LINEAR ? ", resize=INTER_LINEAR" : "") << endl;
+    } // end if (estimateOnly)
 } // end VideoStabilizer::VideoStabilizer()
 
 VideoStabilizer::~VideoStabilizer() {
@@ -158,8 +197,10 @@ void VideoStabilizer::start(bool useVideo, const string& imageFolderPath) {
     
     workers.emplace_back(&VideoStabilizer::captureThreadWrapper, this, useVideo, imageFolderPath);
     workers.emplace_back(&VideoStabilizer::detectionAndTrackingThreadWrapper, this);
-    workers.emplace_back(&VideoStabilizer::stabilizationThreadWrapper, this);
-    workers.emplace_back(&VideoStabilizer::displayThreadWrapper, this);
+    if (!estimateOnly) {
+        workers.emplace_back(&VideoStabilizer::stabilizationThreadWrapper, this);
+        workers.emplace_back(&VideoStabilizer::displayThreadWrapper, this);
+    } // end if (!estimateOnly)
     
     for (auto& worker : workers) {
         pthreads.push_back(worker.native_handle());
@@ -167,8 +208,10 @@ void VideoStabilizer::start(bool useVideo, const string& imageFolderPath) {
     
     if (captureCore >= 0) setThreadAffinity(pthreads[0], captureCore);
     if (detectionCore >= 0) setThreadAffinity(pthreads[1], detectionCore);
-    if (stabilizationCore >= 0) setThreadAffinity(pthreads[2], stabilizationCore);
-    if (displayCore >= 0) setThreadAffinity(pthreads[3], displayCore);
+    if (!estimateOnly) {
+        if (stabilizationCore >= 0) setThreadAffinity(pthreads[2], stabilizationCore);
+        if (displayCore >= 0) setThreadAffinity(pthreads[3], displayCore);
+    } // end if (!estimateOnly)
     
     cout << "Video stabilizer started with " << workers.size() << " threads" << endl;
 } // end start
@@ -223,6 +266,9 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
     
     VideoCapture cap;
     double videoFPS = 15.0;
+    // true — камера читается сырым YUYV (CAP_PROP_CONVERT_RGB=0), серый кадр
+    // получается одной конверсией YUYV->GRAY без промежуточного BGR.
+    bool rawCapture = false;
 
     if (useVideo) {
         // Определяем тип источника: MIPI/v4l2 камера, IP-камера или видеофайл
@@ -249,7 +295,16 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
                 cap.set(CAP_PROP_FRAME_WIDTH, reqW);
                 cap.set(CAP_PROP_FRAME_HEIGHT, reqH);
                 cap.set(CAP_PROP_FOURCC, VideoWriter::fourcc('Y', 'U', 'Y', 'V'));
-                cout << "[CAP] Requested " << reqW << "x" << reqH << " YUYV" << endl;
+                // В режиме «только оценка смещения» берём сырой YUYV без внутренней
+                // конверсии OpenCV в BGR: она делает полный проход по 4 МБ (~2-3 мс),
+                // после которого кадр всё равно переводится в серый. Одна конверсия
+                // YUYV->GRAY вместо двух BGR->GRAY экономит ~4 мс/кадр (79 -> 116 fps).
+                if (estimateOnly) {
+                    cap.set(CAP_PROP_CONVERT_RGB, 0);
+                    rawCapture = true;
+                } // end if (estimateOnly)
+                cout << "[CAP] Requested " << reqW << "x" << reqH << " YUYV"
+                     << (rawCapture ? " (raw, CONVERT_RGB=0)" : "") << endl;
             }
 
             // Отключить автоконтролы сенсора — каждый запуск сбрасывает их заново
@@ -331,6 +386,8 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
     int frameCount = 0;
     int consecutiveSkips = 0;
     Mat grayFullCPU;  // переиспользуемый буфер для grayscale полного кадра
+    Mat rawYUYV;      // переиспользуемый буфер для сырого кадра (rawCapture)
+    Mat smallYUYV;    // переиспользуемый 2-канальный буфер уменьшенного YUYV
     
     while (running) {
         auto startTimeCap = chrono::steady_clock::now();
@@ -368,12 +425,16 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
         FrameData frameData;
         frameData.frameId = frameId++;
         
+        auto startTimeRead = chrono::steady_clock::now();
         if (useVideo) { // if: camera/video source
-            bool frameRead = cap.read(frameData.frameCPU);
-            if (!frameRead || frameData.frameCPU.empty()) {
+            bool frameRead = rawCapture
+                ? cap.read(rawYUYV)
+                : cap.read(frameData.frameCPU);
+            if (!frameRead || (rawCapture ? rawYUYV.empty() : frameData.frameCPU.empty())) {
                 cerr << "Failed to read frame from camera, reopening..." << endl;
                 cap.release();
                 cap.open(videoSource);
+                if (rawCapture) cap.set(CAP_PROP_CONVERT_RGB, 0);  // формат сбрасывается при reopen
                 this_thread::sleep_for(chrono::milliseconds(10));
                 continue;
             } // end if (!frameRead)
@@ -404,17 +465,55 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
             } // end else: cap not open
         } // end else: image sequence
         
-        if (frameData.frameCPU.empty()) continue;
+        auto endTimeRead = chrono::steady_clock::now();
         
         Size compressedSize(frameWidth / compressionConfig, frameHeight / compressionConfig);
         if (compressedSize.width <= 0) compressedSize.width = 1;
         if (compressedSize.height <= 0) compressedSize.height = 1;
         
-        // Быстрее ~в 2 раза без потери качества: сначала grayscale на полном кадре,
-        // затем уменьшение уже серого. Серый линеен по BGR, поэтому результат
-        // эквивалентен resize цвета + cvtColor, но читается в 3 раза меньше данных.
-        cvtColor(frameData.frameCPU, grayFullCPU, COLOR_BGR2GRAY);
-        resize(grayFullCPU, frameData.grayCPU, compressedSize, 0, 0, captureResizeInterp);
+        if (rawCapture) {
+            // Сырой YUYV приходит плоским буфером Nx1 (8UC1, 2 байта на пиксель).
+            // Число строк выводим из фактического размера буфера, а не из
+            // CAP_PROP_FRAME_HEIGHT — драйвер в raw-режиме может рапортовать иначе.
+            Mat yuyv = rawYUYV;
+            if (!yuyv.isContinuous()) yuyv = yuyv.clone();
+            if (yuyv.channels() == 1 && frameWidth > 0 &&
+                (yuyv.total() % (static_cast<size_t>(frameWidth) * 2)) == 0) {
+                int rows = static_cast<int>(yuyv.total() / (static_cast<size_t>(frameWidth) * 2));
+                if (rows > 0) yuyv = yuyv.reshape(2, rows);
+            } // end if (yuyv — плоский YUYV)
+            if (yuyv.channels() == 2) {
+                // В 2-канальном YUYV канал 0 — это всегда Y (и в паре YU, и в паре YV).
+                // Значит, интерполяция каналов внутри resize уменьшает ровно
+                // Y-плоскость, и результат побитово совпадает с «полный GRAY ->
+                // resize» (проверено: отличие от эталона = 0), но без промежуточного
+                // серого 1920x1080 — экономия ~2.5 мс/кадр, это и даёт 120 fps.
+                // Ширина для YUYV-конверсии должна быть чётной.
+                Size convSize(compressedSize.width & ~1, compressedSize.height);
+                if (convSize.width <= 0) convSize.width = 2;
+                if (convSize.height <= 0) convSize.height = 2;
+                resize(yuyv, smallYUYV, convSize, 0, 0, INTER_LINEAR);
+                cvtColor(smallYUYV, frameData.grayCPU, COLOR_YUV2GRAY_YUY2);
+            } else if (yuyv.channels() == 3) { // драйвер всё же отдал BGR — запасной путь
+                cvtColor(yuyv, grayFullCPU, COLOR_BGR2GRAY);
+                resize(grayFullCPU, frameData.grayCPU, compressedSize, 0, 0, captureResizeInterp);
+            } else { // не смогли распаковать кадр — пропускаем, чтобы не упасть
+                static bool warnedRaw = false;
+                if (!warnedRaw) {
+                    cerr << "[CAP] Не удалось распаковать сырой кадр: " << yuyv.size()
+                         << " ch=" << yuyv.channels() << " — пропускаем" << endl;
+                    warnedRaw = true;
+                } // end if (!warnedRaw)
+                continue;
+            } // end else: не распознали формат
+        } else { // else: обычный путь через BGR (нужен полный цветной кадр для стабилизации)
+            if (frameData.frameCPU.empty()) continue;
+            // Быстрее ~в 2 раза без потери качества: сначала grayscale на полном кадре,
+            // затем уменьшение уже серого. Серый линеен по BGR, поэтому результат
+            // эквивалентен resize цвета + cvtColor, но читается в 3 раза меньше данных.
+            cvtColor(frameData.frameCPU, grayFullCPU, COLOR_BGR2GRAY);
+            resize(grayFullCPU, frameData.grayCPU, compressedSize, 0, 0, captureResizeInterp);
+        } // end if (rawCapture)
         
         bool pushed = false;
         int retryCount = 0;
@@ -460,6 +559,10 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
         auto endTimeCap = chrono::steady_clock::now();
         auto durationCap = chrono::duration_cast<chrono::microseconds>(endTimeCap - startTimeCap);
         processingTimeCapture = (processingTimeCapture * 19.0 + durationCap.count() / 1000.0) / 20.0;
+        double durationReadMs = chrono::duration_cast<chrono::microseconds>(endTimeRead - startTimeRead).count() / 1000.0;
+        double durationPrepMs = chrono::duration_cast<chrono::microseconds>(endTimeCap - endTimeRead).count() / 1000.0;
+        processingTimeCapRead = (processingTimeCapRead * 19.0 + durationReadMs) / 20.0;
+        processingTimeCapPrep = (processingTimeCapPrep * 19.0 + durationPrepMs) / 20.0;
         lastFrameTime = chrono::steady_clock::now();
     } // end while (running) — captureThread
     
@@ -482,6 +585,53 @@ void VideoStabilizer::detectionAndTrackingThread() {
     const int REDETECTION_INTERVAL = 15;
     int lastLoggedFrame = -1;
     
+    // ---- Отчёт режима «только оценка смещения» (строка [EST] раз в секунду) ----
+    int estFrameCount = 0;
+    auto estLastTime = chrono::steady_clock::now();
+    TransformParam estLast(0, 0, 0);
+    const char* estVerboseEnv = getenv("VS_EST_VERBOSE");
+    const bool estPerFrame = (estVerboseEnv != nullptr && string(estVerboseEnv) != "0");
+    
+    // Публикация результата кадра: либо в очередь стабилизации, либо (в режиме
+    // estimate-only) в консольный отчёт. Тайминг det+trk снимается до ожидания
+    // очереди в обоих случаях — так же, как было раньше.
+    auto publish = [&](FrameData& fd, chrono::steady_clock::time_point tStart) {
+        auto endTimeDetTrack = chrono::steady_clock::now();
+        auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - tStart);
+        processingTimeDetectionTracking =
+            (processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
+        
+        if (estimateOnly) {
+            estLast = fd.transformFirstDerivative;
+            estFrameCount++;
+            if (estPerFrame) {
+                cout << format("[EST] frame=%d dx=%+.2f dy=%+.2f da=%+.5f rad pts=%d",
+                        fd.frameId, estLast.dx, estLast.dy, estLast.da,
+                        static_cast<int>(fd.points.size())) << endl;
+            } // end if (estPerFrame)
+            auto now = chrono::steady_clock::now();
+            long elapsedMs = chrono::duration_cast<chrono::milliseconds>(now - estLastTime).count();
+            if (elapsedMs >= 1000) {
+                double estFps = estFrameCount * 1000.0 / static_cast<double>(elapsedMs);
+                cout << format("[EST] fps=%.1f | dx=%+.2f dy=%+.2f da=%+.5f rad (%.3f deg) | pts=%d"
+                               " | det+trk=%.2fms cap=%.2fms (read=%.2f prep=%.2f) rawQ=%d skip=%d",
+                        estFps, estLast.dx, estLast.dy, estLast.da, estLast.da * 180.0 / CV_PI,
+                        trackedPoints.load(), processingTimeDetectionTracking,
+                        processingTimeCapture, processingTimeCapRead, processingTimeCapPrep,
+                        static_cast<int>(rawFramesQueue.size()),
+                        framesSkipped.load()) << endl;
+                estFrameCount = 0;
+                estLastTime = now;
+            } // end if (elapsedMs >= 1000)
+            return;
+        } // end if (estimateOnly)
+        
+        while (processedFramesQueue.size() >= MAX_QUEUE_SIZE && running)
+            this_thread::sleep_for(chrono::milliseconds(5));
+        
+        processedFramesQueue.push(move(fd));
+    }; // end publish
+    
     while (running) {
         FrameData frameData;
         
@@ -490,7 +640,9 @@ void VideoStabilizer::detectionAndTrackingThread() {
         if (!rawFramesQueue.wait_and_pop(frameData)) break;
         
         if (!running) break;
-        if (frameData.frameCPU.empty()) continue;
+        // Проверяем серый кадр, а не полный BGR: в режиме «только оценка смещения»
+        // цветной кадр не материализуется вообще (frameCPU пуст).
+        if (frameData.grayCPU.empty()) continue;
         
         auto startTimeDetTrack = chrono::steady_clock::now();
         framesProcessedInThread++;
@@ -512,9 +664,7 @@ void VideoStabilizer::detectionAndTrackingThread() {
                 prevPoints.clear();
                 trackedPoints.store(0);
                 
-                while (processedFramesQueue.size() >= MAX_QUEUE_SIZE && running)
-                    this_thread::sleep_for(chrono::milliseconds(1));
-                processedFramesQueue.push(move(frameData));
+                publish(frameData, startTimeDetTrack);
                 continue;
             } // end try-catch calcOpticalFlowPyrLK
             
@@ -651,23 +801,16 @@ void VideoStabilizer::detectionAndTrackingThread() {
             detector->setK(harrisKConfig);
         } // end if (points > maxCorners*4/5)
 
-        auto endTimeDetTrack = chrono::steady_clock::now();
-        auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - startTimeDetTrack);
-        processingTimeDetectionTracking = (processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
-        
-        while (processedFramesQueue.size() >= MAX_QUEUE_SIZE && running)
-            this_thread::sleep_for(chrono::milliseconds(5));
-        
-        processedFramesQueue.push(move(frameData));
-        
-        // Логирование каждые 10 кадров
-        if (gVerbose && framesProcessedInThread % 10 == 0 && framesProcessedInThread != lastLoggedFrame) {
+        // Логирование каждые 10 кадров (до публикации: publish() перемещает кадр)
+        if (!estimateOnly && gVerbose && framesProcessedInThread % 10 == 0 && framesProcessedInThread != lastLoggedFrame) {
             cout << "[DETECT] Frame " << frameData.frameId 
                  << " processed | Points tracked: " << frameData.points.size()
                  << " | Queue size: " << processedFramesQueue.size()
                  << " | Total processed: " << framesProcessedInThread << endl;
             lastLoggedFrame = frameData.frameId;
         } // end if (framesProcessedInThread % 10 == 0)
+        
+        publish(frameData, startTimeDetTrack);
     } // end while (running) — detectionAndTrackingThread
     
     cout << "[DETECT] === Detection and Tracking thread stopped. Processed " << framesProcessedInThread << " frames. ===" << endl;
