@@ -123,12 +123,17 @@ VideoStabilizer::VideoStabilizer()
     // =1 оба буфера, =3 только приёмник.
     const char* pinned = getenv("VS_PINNED");
     pinnedMode = (pinned != nullptr) ? atoi(pinned) : 2;
+    // VS_NO_STAB=1 — стартовать с выключенным контуром стабилизации (пиковый fps).
+    const char* noStab = getenv("VS_NO_STAB");
+    stabilizationEnabled = !(noStab != nullptr && string(noStab) != "0");
     cout << "[LOG] Построчный лог кадров: " << (gVerbose ? "ВКЛ (VS_VERBOSE)" : "выкл (VS_VERBOSE=1 для включения)") << endl;
     cout << "[WARP] Режим warpAffine: " << (useCpuWarp ? "CPU" : "GPU (OpenCL)") << endl;
     if (!useCpuWarp) {
         cout << "[WARP] GPU-буферы: VS_PINNED=" << pinnedMode
              << (pinnedMode == 0 ? " (device)" : " (host memory)") << endl;
     } // end if (!useCpuWarp)
+    cout << "[STAB] Контур стабилизации: "
+         << (stabilizationEnabled.load() ? "ВКЛ (клавиша B — выключить)" : "ВЫКЛ (VS_NO_STAB)") << endl;
 } // end VideoStabilizer::VideoStabilizer()
 
 VideoStabilizer::~VideoStabilizer() {
@@ -713,12 +718,15 @@ void VideoStabilizer::stabilizationThread() {
                     }
                 }
                 
+                // Контур стабилизации можно выключить на лету (клавиша B / VS_NO_STAB=1):
+                // тогда кадр идёт в вывод без компенсации движения — это пиковый fps.
+                const bool stabOn = stabilizationEnabled.load();
                 // Копируем кадр на GPU (только если он реально нужен: Винер или GPU-warp)
-                const bool wienerActive = (::framePart < 0.65 && wiener);
+                const bool wienerActive = (stabOn && ::framePart < 0.65 && wiener);
                 // Буферы под GPU-warp: тип размещения выбирается один раз.
                 // VS_PINNED=1 -> host-memory (CL_MEM_ALLOC_HOST_PTR). На Mali hostUnifiedMemory=1
                 // копии через pinned-память ~в 2 раза дешевле, чем в device-буфер.
-                if (wienerActive || !useCpuWarp) {
+                if (wienerActive || (stabOn && !useCpuWarp)) {
                     const UMatUsageFlags srcUsage =
                         (pinnedMode == 1 || pinnedMode == 2) ? USAGE_ALLOCATE_HOST_MEMORY : USAGE_DEFAULT;
                     const UMatUsageFlags dstUsage =
@@ -732,9 +740,9 @@ void VideoStabilizer::stabilizationThread() {
                         (gpuWarpDst.empty() || gpuWarpDst.size() != roi.size() || gpuWarpDst.type() != CV_8UC3)) {
                         gpuWarpDst.create(roi.height, roi.width, CV_8UC3, dstUsage);
                     } // end if (gpuWarpDst needs realloc)
-                } // end if (wienerActive || !useCpuWarp)
+                } // end if (wienerActive || (stabOn && !useCpuWarp))
                 auto tUpload0 = chrono::steady_clock::now();
-                if (wienerActive || !useCpuWarp) {
+                if (wienerActive || (stabOn && !useCpuWarp)) {
                     frameData.frameCPU.copyTo(gpuFrame);
                 }
                 auto tUpload1 = chrono::steady_clock::now();
@@ -838,11 +846,25 @@ void VideoStabilizer::stabilizationThread() {
                     } // end if (gpuFrame.empty())
                 } // end if (::framePart < 0.65 && wiener) — блок Винеровской фильтрации
                 
-                // Стабилизация (всегда выполняется)
+                // Стабилизация (по умолчанию; отключается клавишей B / VS_NO_STAB=1)
                 // Внимание: матрица stabMatrix уже в координатах ROI, поэтому warp идёт
                 // сразу в размер ROI — это ~в 1.4 раза меньше пикселей и без отдельного crop.
                 auto tWarp0 = chrono::steady_clock::now();
-                if (useCpuWarp) {
+                if (!stabOn) {
+                    // Стабилизация выключена: отдаём кадр как есть, но приводим его к размеру ROI
+                    // (нулевое копирование — это только новый заголовок Mat), чтобы размер вывода
+                    // и отображения не менялся при переключении.
+                    if (roi.width > 0 && roi.height > 0 &&
+                        frameData.frameCPU.cols >= roi.x + roi.width &&
+                        frameData.frameCPU.rows >= roi.y + roi.height) {
+                        Mat stabTmp = frameData.frameCPU(roi);
+                        frameData.frameCPU = stabTmp;
+                    } // end if (roi внутри кадра)
+                    auto tWarp1 = chrono::steady_clock::now();
+                    processingTimeWarp = (processingTimeWarp * 19.0 +
+                        chrono::duration_cast<chrono::microseconds>(tWarp1 - tWarp0).count() / 1000.0) / 20.0;
+                    processingTimeDownload = (processingTimeDownload * 19.0 + 0.0) / 20.0;
+                } else if (useCpuWarp) {
                     // CPU-вариант: warp прямо из CPU-кадра, без upload/download на GPU
                     Mat stabTmp;
                     warpAffine(frameData.frameCPU, stabTmp, frameData.stabMatrix, roi.size(),
@@ -1024,8 +1046,9 @@ void VideoStabilizer::displayThread() {
         }
         Mat& displayFrame = *displayFramePtr;
         
-        string infoText = format("FPS: %d | nsr: %1.2f | D: %1.2f | part: %1.2f | Skip: %d",
-                                fps.load(), nsr, D, ::framePart, framesSkipped.load());
+        string infoText = format("FPS: %d | nsr: %1.2f | D: %1.2f | part: %1.2f | Skip: %d | STAB: %s",
+                                fps.load(), nsr, D, ::framePart, framesSkipped.load(),
+                                stabilizationEnabled.load() ? "ON" : "OFF");
 
 string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / %ld ",
                                     processingTimeCapture, processingTimeDetectionTracking, 
@@ -1071,6 +1094,11 @@ string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / 
         } else if (key == 'd') {
             debugMode = !debugMode;
             cout << "Debug mode: " << (debugMode ? "ON" : "OFF") << endl;
+        } else if (key == 'b' || key == 'B') {
+            // Переключение контура стабилизации на лету: пиковый fps без компенсации движения.
+            bool now = !stabilizationEnabled.load();
+            stabilizationEnabled.store(now);
+            cout << "Stabilization: " << (now ? "ON" : "OFF (пиковый fps)") << endl;
         } else if (key == 's' || key == 'S') {
             if (::framePart < 0.95) {
                 ::framePart *= 1.01;

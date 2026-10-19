@@ -84,6 +84,11 @@ public:
     std::vector<pthread_t> pthreads;
     std::atomic<bool> running;
 
+    // Контур стабилизации (upload + warp + download) можно отключить ради пикового fps.
+    // Переключается на лету клавишей B или на старте переменной VS_NO_STAB=1.
+    // При выключении кадр отдаётся как есть (без компенсации движения).
+    std::atomic<bool> stabilizationEnabled{true};
+
     VideoStabilizer();
     ~VideoStabilizer();
 
