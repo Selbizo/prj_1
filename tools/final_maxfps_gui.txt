@@ -1,0 +1,64 @@
+========================================
+ MULTI-THREADED VIDEO STABILIZER OPENCL 
+========================================
+CPU cores available: 6
+
+[ИНИЦИАЛИЗАЦИЯ GPU]
+[GPU] Найдено устройство: Mali-G52
+[GPU] ✓ FP16 поддерживается (cl_khr_fp16)
+[GPU] ✓ Обнаружена Mali GPU (half заявлен драйвером, но не используется)
+
+Источник: камера /dev/video0
+Available CPU cores: 6
+Detector created with maxCorners=200
+Memory limits: Queue size=3, Frame buffer=4
+[CAP] Максимальный fps: сырой YUYV + одна конверсия YUYV->BGR (VS_MAX_FPS_RAW); для ~90 fps запускайте с --no-stab
+[THREADS] Потоков внутреннего пула OpenCV: 6 (по умолчанию)
+[LOG] Построчный лог кадров: выкл (VS_VERBOSE=1 для включения)
+[WARP] Режим warpAffine: GPU (OpenCL)
+[WARP] GPU-буферы: VS_PINNED=2 (host memory)
+[STAB] Контур стабилизации: ВЫКЛ (VS_NO_STAB)
+[GPU] FP16 запрошен, но отключён (USE_FP16_WARP=false в config.h); используется обычный warpAffine
+[CAP] === Capture thread started ===
+[CAP] Mode: Camera/Video
+Video stabilizer started with 4 threads
+
+Управление:
+  ESC или Q - выход
+  Пробел   - пауза
+  F         - сохранить текущий кадр
+  D         - переключить режим отладки
+  B         - вкл/выкл контур стабилизации (пиковый fps)
+  S/W       - увеличить/уменьшить область кадра
+  U/I       - увеличить/уменьшить коэффициент заполнения (D)
+  J/K       - увеличить/уменьшить NSR
+
+[GPU] FP16 недоступен на этой платформе (ядро half3 не собирается OpenCL-компилятором Mali) — работает обычный warpAffine
+[STAB] === Stabilization thread started (GPU enabled) ===
+[DISPLAY] === Display thread started ===
+[DISPLAY] maxFpsRaw: превью 0.5x, 20 fps (VS_DISPLAY_SCALE / VS_DISPLAY_FPS)
+[DETECT] === Detection and Tracking thread started (CPU only) ===
+[CAP] Requested 1920x1080 YUYV (raw, CONVERT_RGB=0)
+[CAP] ROI: x=288 y=162 w=1344 h=756
+Resolution: 1920x1080
+ROI: x=288 y=162 w=1344 h=756
+[PERF] fps=14.4 | capfps=0 | cap=9.2ms det+trk=2.0ms stab=0.0ms disp=6.1ms | stab[upl=0.0 warp=0.0 dl=0.0]ms | rawQ=0 procQ=0 buf=4 pts=17 skip=0
+[PERF] fps=20.0 | capfps=96 | cap=9.5ms det+trk=2.8ms stab=0.1ms disp=6.2ms | stab[upl=0.0 warp=0.0 dl=0.0]ms | rawQ=0 procQ=0 buf=3 pts=19 skip=0
+[PERF] fps=19.9 | capfps=106 | cap=8.9ms det+trk=3.1ms stab=0.1ms disp=7.3ms | stab[upl=0.0 warp=0.0 dl=0.0]ms | rawQ=0 procQ=0 buf=4 pts=21 skip=0
+[PERF] fps=20.0 | capfps=110 | cap=8.4ms det+trk=3.8ms stab=0.1ms disp=7.6ms | stab[upl=0.0 warp=0.0 dl=0.0]ms | rawQ=0 procQ=0 buf=4 pts=23 skip=0
+[PERF] fps=19.7 | capfps=110 | cap=9.2ms det+trk=3.3ms stab=0.1ms disp=7.8ms | stab[upl=0.0 warp=0.0 dl=0.0]ms | rawQ=0 procQ=0 buf=4 pts=20 skip=0
+[PERF] fps=19.9 | capfps=105 | cap=9.1ms det+trk=3.6ms stab=0.1ms disp=7.9ms | stab[upl=0.0 warp=0.0 dl=0.0]ms | rawQ=0 procQ=0 buf=4 pts=41 skip=0
+[PERF] fps=20.1 | capfps=110 | cap=9.1ms det+trk=3.7ms stab=0.1ms disp=7.7ms | stab[upl=0.0 warp=0.0 dl=0.0]ms | rawQ=0 procQ=0 buf=3 pts=31 skip=0
+[PERF] fps=19.9 | capfps=110 | cap=9.6ms det+trk=3.7ms stab=0.1ms disp=7.3ms | stab[upl=0.0 warp=0.0 dl=0.0]ms | rawQ=0 procQ=0 buf=4 pts=46 skip=0
+[PERF] fps=20.0 | capfps=106 | cap=8.7ms det+trk=3.4ms stab=0.1ms disp=7.6ms | stab[upl=0.0 warp=0.0 dl=0.0]ms | rawQ=0 procQ=0 buf=4 pts=17 skip=0
+[PERF] fps=19.9 | capfps=109 | cap=10.2ms det+trk=3.7ms stab=0.1ms disp=7.7ms | stab[upl=0.0 warp=0.0 dl=0.0]ms | rawQ=0 procQ=0 buf=3 pts=24 skip=0
+[PERF] fps=19.9 | capfps=104 | cap=9.3ms det+trk=3.8ms stab=0.1ms disp=7.5ms | stab[upl=0.0 warp=0.0 dl=0.0]ms | rawQ=0 procQ=0 buf=4 pts=18 skip=0
+
+[RUN] Задано 12 с — останавливаемся
+[STAB] === Stabilization thread stopped. Stabilized 1216 frames, Wiener failures: 0 ===
+[DETECT] === Detection and Tracking thread stopped. Processed 1216 frames. ===
+Capture thread stopped. Total frames captured: 48, Skipped: 1
+[DISPLAY] === Display thread stopped. Displayed 228 frames. ===
+Video stabilizer stopped. Total frames processed: 1216, Skipped: 1
+Program finished successfully
+Video stabilizer stopped. Total frames processed: 1216, Skipped: 1

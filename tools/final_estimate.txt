@@ -1,0 +1,44 @@
+========================================
+ MULTI-THREADED VIDEO STABILIZER OPENCL 
+========================================
+CPU cores available: 6
+
+[EST] GPU не используется: стабилизация и отображение отключены
+Источник: камера /dev/video0
+Available CPU cores: 6
+Detector created with maxCorners=200
+Memory limits: Queue size=3, Frame buffer=4
+[THREADS] Потоков внутреннего пула OpenCV: 1 (по умолчанию для estimate-only — измерено, что так быстрее)
+[LOG] Построчный лог кадров: выкл (VS_VERBOSE=1 для включения)
+[WARP] Режим warpAffine: GPU (OpenCL)
+[WARP] GPU-буферы: VS_PINNED=2 (host memory)
+[STAB] Контур стабилизации: ВЫКЛ (VS_NO_STAB)
+[EST] Режим «только оценка смещения» (VS_ESTIMATE_ONLY): потоков 2 из 4 — захват сырого YUYV + трекинг; стабилизация и отображение не запускаются, resize=INTER_LINEAR
+Video stabilizer started with 2 threads
+
+[EST] Режим «только оценка смещения». Каждую секунду печатается:
+      fps | dx, dy (пиксели полного кадра) | da (радианы и градусы)
+      pts | det+trk | cap | rawQ | skip
+      VS_EST_VERBOSE=1 — печатать смещение на каждом кадре
+[CAP] === Capture thread started ===
+[CAP] Mode: Camera/Video
+[DETECT] === Detection and Tracking thread started (CPU only) ===
+[CAP] Requested 1920x1080 YUYV (raw, CONVERT_RGB=0)
+[CAP] ROI: x=288 y=162 w=1344 h=756
+Resolution: 1920x1080
+ROI: x=288 y=162 w=1344 h=756
+[EST] fps=55.4 | dx=+2.94 dy=-3.38 da=-0.00156 rad (-0.090 deg) | pts=24 | det+trk=1.87ms cap=9.36ms (read=6.92 prep=2.43) rawQ=0 skip=0
+[EST] fps=103.7 | dx=+7.00 dy=+8.08 da=-0.00319 rad (-0.183 deg) | pts=12 | det+trk=3.21ms cap=10.81ms (read=7.34 prep=3.47) rawQ=0 skip=0
+[EST] fps=113.1 | dx=+47.45 dy=+84.30 da=+0.00282 rad (0.161 deg) | pts=7 | det+trk=3.34ms cap=9.12ms (read=6.83 prep=2.28) rawQ=0 skip=0
+[EST] fps=109.5 | dx=+0.09 dy=+2.79 da=-0.00556 rad (-0.318 deg) | pts=10 | det+trk=3.49ms cap=9.05ms (read=6.67 prep=2.37) rawQ=0 skip=0
+[EST] fps=115.0 | dx=-1.20 dy=+8.14 da=-0.00121 rad (-0.069 deg) | pts=9 | det+trk=3.68ms cap=8.93ms (read=6.62 prep=2.31) rawQ=0 skip=0
+[EST] fps=115.1 | dx=-3.13 dy=-1.07 da=-0.00082 rad (-0.047 deg) | pts=21 | det+trk=3.47ms cap=8.61ms (read=6.22 prep=2.38) rawQ=0 skip=0
+[EST] fps=108.7 | dx=+4.25 dy=+10.04 da=-0.00909 rad (-0.521 deg) | pts=8 | det+trk=3.58ms cap=8.78ms (read=6.49 prep=2.28) rawQ=1 skip=0
+
+[RUN] Задано 8 с — останавливаемся
+[DETECT] === Detection and Tracking thread stopped. Processed 839 frames. ===
+Capture thread stopped. Total frames captured: 64, Skipped: 1
+Video stabilizer stopped. Total frames processed: 0, Skipped: 1
+[EST] ИТОГО (end-to-end): 839 кадров за 8.02 с = 104.57 fps
+Program finished successfully
+Video stabilizer stopped. Total frames processed: 0, Skipped: 1

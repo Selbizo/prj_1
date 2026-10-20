@@ -38,6 +38,9 @@ struct FrameData {
     int frameId = 0;
     double timestamp = 0;
     bool shouldSkip = false;
+    // true — frameCPU уже обрезан до ROI (режим VS_MAX_FPS_RAW без стабилизации).
+    // Тогда потоку стабилизации не нужно повторно вырезать ROI, а варп пропускается.
+    bool frameCPUIsRoi = false;
 };
 
 // ========================= СТРУКТУРА ВОЗМОЖНОСТЕЙ GPU =========================

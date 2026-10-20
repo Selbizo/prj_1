@@ -36,12 +36,15 @@ static void printUsage(const char* prog) {
          << "                     Каждую секунду печатается строка [EST] с dx/dy/da.\n"
          << "  --duration <sec>  работать заданное число секунд и корректно выйти\n"
          << "  --no-stab        стартовать без контура стабилизации (пиковый fps)\n"
+         << "  --max-fps-raw    обычный режим с окном, но камера читается сырым YUYV\n"
+         << "                     (одна конверсия YUYV->BGR для окна). С --no-stab\n"
+         << "                     даёт ~100-115 fps; в --estimate-only игнорируется.\n"
          << "  --no-gui         без окна (в консоль идут только строки [PERF]/[EST])\n"
          << "  -h, --help       эта справка\n\n"
          << "Без --source показывается интерактивное меню, как раньше.\n"
-         << "Переменные окружения: VS_ESTIMATE_ONLY, VS_NO_STAB, VS_NO_GUI,\n"
-         << "  VS_FAST_RESIZE, VS_OCV_THREADS, VS_PINNED, VS_WARP_CPU, VS_VERBOSE,\n"
-         << "  VS_EST_VERBOSE.\n";
+         << "Переменные окружения: VS_ESTIMATE_ONLY, VS_MAX_FPS_RAW, VS_NO_STAB,\n"
+         << "  VS_NO_GUI, VS_FAST_RESIZE, VS_OCV_THREADS, VS_PINNED, VS_WARP_CPU,\n"
+         << "  VS_VERBOSE, VS_EST_VERBOSE.\n";
 } // end printUsage
 
 // ========================= ГЛАВНАЯ ФУНКЦИЯ =========================
@@ -72,6 +75,10 @@ int main(int argc, char** argv) {
             setenv("VS_NO_GUI", "1", 1);
         } else if (arg == "--no-stab") {
             setenv("VS_NO_STAB", "1", 1);
+        } else if (arg == "--max-fps-raw") {
+            // Обычный режим с окном, но без внутренней конверсии OpenCV:
+            // сырой YUYV + одна YUYV->BGR для окна. Максимальный эффект с --no-stab.
+            setenv("VS_MAX_FPS_RAW", "1", 1);
         } else if (arg == "--no-gui") {
             setenv("VS_NO_GUI", "1", 1);
         } else if (arg == "-h" || arg == "--help") {

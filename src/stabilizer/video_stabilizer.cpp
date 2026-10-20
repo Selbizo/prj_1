@@ -136,6 +136,18 @@ VideoStabilizer::VideoStabilizer()
         // но в ~8 раз дешевле (0.5 мс против 4.5 мс, измерено). Item 2 плана.
         captureResizeInterp = INTER_LINEAR;
     } // end if (estimateOnly)
+    // VS_MAX_FPS_RAW=1 — обычный конвейер, но сырой захват YUYV и одна конверсия
+    // YUYV->BGR для окна/варпа (см. комментарий у maxFpsRaw в заголовке).
+    const char* maxFpsRawEnv = getenv("VS_MAX_FPS_RAW");
+    maxFpsRaw = (maxFpsRawEnv != nullptr && string(maxFpsRawEnv) != "0");
+    if (maxFpsRaw && !estimateOnly) {
+        cout << "[CAP] Максимальный fps: сырой YUYV + одна конверсия YUYV->BGR "
+             << "(VS_MAX_FPS_RAW); для ~100-115 fps запускайте с --no-stab" << endl;
+    } else if (maxFpsRaw && estimateOnly) {
+        cout << "[CAP] VS_MAX_FPS_RAW игнорируется в estimate-only "
+             << "(полный BGR там не нужен)" << endl;
+        maxFpsRaw = false;
+    } // end if (maxFpsRaw)
     // Число потоков внутреннего пула OpenCV. В конвейере работают несколько
     // потоков приложения, и каждый вызывает parallel_for_ — пул по умолчанию
     // (по числу ядер) даёт оверсабскрипшн, и операции идут медленнее, чем
@@ -295,14 +307,16 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
                 cap.set(CAP_PROP_FRAME_WIDTH, reqW);
                 cap.set(CAP_PROP_FRAME_HEIGHT, reqH);
                 cap.set(CAP_PROP_FOURCC, VideoWriter::fourcc('Y', 'U', 'Y', 'V'));
-                // В режиме «только оценка смещения» берём сырой YUYV без внутренней
-                // конверсии OpenCV в BGR: она делает полный проход по 4 МБ (~2-3 мс),
-                // после которого кадр всё равно переводится в серый. Одна конверсия
-                // YUYV->GRAY вместо двух BGR->GRAY экономит ~4 мс/кадр (79 -> 116 fps).
-                if (estimateOnly) {
+                // Берём сырой YUYV без внутренней конверсии OpenCV в BGR: она делает
+                // полный проход по 4 МБ (~2-3 мс), после которого кадр всё равно
+                // переводится в серый. Одна конверсия YUYV->GRAY вместо двух
+                // BGR->GRAY экономит ~4 мс/кадр (79 -> 116 fps).
+                // maxFpsRaw — то же самое в обычном режиме: серый для трекинга
+                // делаем из Y-плоскости, а полный BGR — одной YUYV->BGR для окна.
+                if (estimateOnly || maxFpsRaw) {
                     cap.set(CAP_PROP_CONVERT_RGB, 0);
                     rawCapture = true;
-                } // end if (estimateOnly)
+                } // end if (estimateOnly || maxFpsRaw)
                 cout << "[CAP] Requested " << reqW << "x" << reqH << " YUYV"
                      << (rawCapture ? " (raw, CONVERT_RGB=0)" : "") << endl;
             }
@@ -494,9 +508,41 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
                 if (convSize.height <= 0) convSize.height = 2;
                 resize(yuyv, smallYUYV, convSize, 0, 0, INTER_LINEAR);
                 cvtColor(smallYUYV, frameData.grayCPU, COLOR_YUV2GRAY_YUY2);
+                // maxFpsRaw: полный цветной кадр нужен только окну/варпу.
+                // В estimate-only его не материализуем — именно это и даёт 110+ fps.
+                // Конверсия идёт из той же 2-канальной YUYV-матрицы (Y+UV пара),
+                // поэтому цвет корректный, без «полос» от неверной ширины.
+                if (maxFpsRaw) {
+                    // Если стабилизация выключена, полный кадр не нужен: окно
+                    // показывает только ROI. Конвертируем сразу ROI-область —
+                    // ~в 2 раза меньше пикселей и ~2 мс экономии (80 -> 90+ fps).
+                    // Для YUYV начало и ширина области должны быть чётными.
+                    const bool roiOnly = !stabilizationEnabled.load() &&
+                                         roi.x >= 0 && roi.y >= 0 &&
+                                         roi.width > 1 && roi.height > 1 &&
+                                         roi.x + roi.width <= yuyv.cols &&
+                                         roi.y + roi.height <= yuyv.rows;
+                    if (roiOnly) {
+                        const int rx = roi.x & ~1;
+                        const int rw = min(yuyv.cols - rx, roi.width + (roi.x - rx)) & ~1;
+                        const int ry = roi.y;
+                        const int rh = min(yuyv.rows - ry, roi.height);
+                        if (rw > 1 && rh > 1) {
+                            cvtColor(yuyv(Rect(rx, ry, rw, rh)), frameData.frameCPU,
+                                     COLOR_YUV2BGR_YUY2);
+                            frameData.frameCPUIsRoi = true;
+                        } // end if (rw/rh)
+                    } // end if (roiOnly)
+                    if (!frameData.frameCPUIsRoi) {
+                        cvtColor(yuyv, frameData.frameCPU, COLOR_YUV2BGR_YUY2);
+                    } // end if (!frameCPUIsRoi)
+                } // end if (maxFpsRaw)
             } else if (yuyv.channels() == 3) { // драйвер всё же отдал BGR — запасной путь
                 cvtColor(yuyv, grayFullCPU, COLOR_BGR2GRAY);
                 resize(grayFullCPU, frameData.grayCPU, compressedSize, 0, 0, captureResizeInterp);
+                // Копируем, а не присваиваем: yuyv может быть видом на
+                // переиспользуемый rawYUYV, который перезапишет следующий cap.read().
+                if (maxFpsRaw) yuyv.copyTo(frameData.frameCPU);
             } else { // не смогли распаковать кадр — пропускаем, чтобы не упасть
                 static bool warnedRaw = false;
                 if (!warnedRaw) {
@@ -531,6 +577,7 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
                     frameData.frameCPU.copyTo(newData.frameCPU);
                     frameData.grayCPU.copyTo(newData.grayCPU);
                     newData.timestamp = frameData.timestamp;
+                    newData.frameCPUIsRoi = frameData.frameCPUIsRoi;
                     frameData = move(newData);
                 } // end if (retryCount < MAX_RETRIES)
             } // end else: push failed
@@ -851,8 +898,9 @@ void VideoStabilizer::stabilizationThread() {
                             frameData.transformSKO, frameData.stabMatrix, tauStab, roi, a, b, kSwitch);
                 frameData.transform = oldTransform;
                 
-                // Рисуем точки на CPU
-                if (!frameData.points.empty() && ::framePart > 0.7) {
+                // Рисуем точки на CPU. Координаты точек — в полном кадре,
+                // поэтому на ROI-кадре их рисовать нельзя.
+                if (!frameData.points.empty() && ::framePart > 0.7 && !frameData.frameCPUIsRoi) {
                     int pointsToShow = min(300, static_cast<int>(frameData.points.size()));
                     for (int i = 0; i < pointsToShow; i++) {
                         Point2f pt = frameData.points[i];
@@ -864,7 +912,9 @@ void VideoStabilizer::stabilizationThread() {
                 
                 // Контур стабилизации можно выключить на лету (клавиша B / VS_NO_STAB=1):
                 // тогда кадр идёт в вывод без компенсации движения — это пиковый fps.
-                const bool stabOn = stabilizationEnabled.load();
+                // ROI-кадр (VS_MAX_FPS_RAW без стабилизации) нельзя варпить:
+                // в нём нет запаса по краям. Такой кадр отдаём как есть.
+                const bool stabOn = stabilizationEnabled.load() && !frameData.frameCPUIsRoi;
                 // Копируем кадр на GPU (только если он реально нужен: Винер или GPU-warp)
                 const bool wienerActive = (stabOn && ::framePart < 0.65 && wiener);
                 // Буферы под GPU-warp: тип размещения выбирается один раз.
@@ -998,7 +1048,9 @@ void VideoStabilizer::stabilizationThread() {
                     // Стабилизация выключена: отдаём кадр как есть, но приводим его к размеру ROI
                     // (нулевое копирование — это только новый заголовок Mat), чтобы размер вывода
                     // и отображения не менялся при переключении.
-                    if (roi.width > 0 && roi.height > 0 &&
+                    // ROI-кадр уже нужного размера — только заголовок, без копирования.
+                    if (!frameData.frameCPUIsRoi &&
+                        roi.width > 0 && roi.height > 0 &&
                         frameData.frameCPU.cols >= roi.x + roi.width &&
                         frameData.frameCPU.rows >= roi.y + roi.height) {
                         Mat stabTmp = frameData.frameCPU(roi);
@@ -1098,6 +1150,32 @@ void VideoStabilizer::displayThread() {
     double displayScale = 1.0;
     const char* dscale = getenv("VS_DISPLAY_SCALE");
     if (dscale != nullptr) { double v = atof(dscale); if (v > 0.0) displayScale = v; }
+    // В maxFpsRaw окно нужно для визуальной проверки кадра, а не как
+    // полноразмерный монитор: imshow 1344x756 на X11 стоит 16-40 мс и
+    // отбирает CPU у конвейера. По умолчанию — превью 0.5x.
+    if (maxFpsRaw && dscale == nullptr && !noGui) displayScale = 0.5;
+    // Частота превью: VS_DISPLAY_FPS=N (0 — без ограничения). В maxFpsRaw
+    // по умолчанию 20 fps — этого достаточно, чтобы глазами оценить кадр,
+    // и окно не мешает захвату идти на ~100-110 fps. Конвейер при этом не
+    // тормозит: буфер отображения и так выбрасывает устаревшие кадры.
+    double displayFpsCap = 0.0;
+    const char* dfps = getenv("VS_DISPLAY_FPS");
+    if (dfps != nullptr) {
+        displayFpsCap = atof(dfps);
+    } else if (maxFpsRaw && !noGui) {
+        // В noGui поток отображения почти ничего не делает — ограничивать нечего.
+        // 20 fps достаточно, чтобы глазами оценить кадр, и заметно дешевле для CPU,
+        // чем 30: окно не отбирает кадры у конвейера.
+        displayFpsCap = 20.0;
+    }
+    if (maxFpsRaw && !noGui) {
+        // Одним вызовом, иначе строку перемешивают другие потоки.
+        string capText = (displayFpsCap > 0.0)
+            ? format("%.0f fps", displayFpsCap) : string("без ограничения");
+        cout << format("[DISPLAY] maxFpsRaw: превью %gx, %s "
+                       "(VS_DISPLAY_SCALE / VS_DISPLAY_FPS)\n",
+                       displayScale, capText.c_str());
+    }
     // WINDOW_AUTOSIZE: X11 не масштабирует картинку -> минимальная задержка imshow.
     // Раньше было WINDOW_NORMAL + resize до 1920x1080 (13 мс/кадр + медленный вывод).
     if (!noGui) namedWindow(windowName, WINDOW_AUTOSIZE);
@@ -1110,6 +1188,7 @@ void VideoStabilizer::displayThread() {
     }
     
     int displayedFrames = 0;
+    double lastDispFps = 0.0;
     auto lastDisplayTime = chrono::steady_clock::now();
     auto lastFrameTime = chrono::steady_clock::now();
     int lastLoggedDisplay = -1;
@@ -1190,8 +1269,8 @@ void VideoStabilizer::displayThread() {
         }
         Mat& displayFrame = *displayFramePtr;
         
-        string infoText = format("FPS: %d | nsr: %1.2f | D: %1.2f | part: %1.2f | Skip: %d | STAB: %s",
-                                fps.load(), nsr, D, ::framePart, framesSkipped.load(),
+        string infoText = format("FPS(cap): %d | view: %.0f | nsr: %1.2f | D: %1.2f | part: %1.2f | Skip: %d | STAB: %s",
+                                fps.load(), lastDispFps, nsr, D, ::framePart, framesSkipped.load(),
                                 stabilizationEnabled.load() ? "ON" : "OFF");
 
 string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / %ld ",
@@ -1212,10 +1291,16 @@ string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / 
              << endl;
              
         const int dw = displayFrame.cols;
-        putText(displayFrame, infoText, Point(10, 50 * dw / 800),
-               FONT_HERSHEY_SIMPLEX, 0.5 * dw / 800, colorBLUE, 2 * dw / 800);
-        putText(displayFrame, infoLatencies, Point(10, 100 * dw / 800),
-               FONT_HERSHEY_SIMPLEX, 0.5 * dw / 800, colorBLUE, 2 * dw / 800);
+        // В noGui окна нет — рисовать HUD некуда, а putText на полном кадре
+        // стоит ~1-2 мс и отбирает время у захвата.
+        if (!noGui) {
+            putText(displayFrame, infoText, Point(10, 50 * dw / 800),
+                   FONT_HERSHEY_SIMPLEX, max(0.35, 0.5 * dw / 800.0), colorBLUE,
+                   max(1, static_cast<int>(2 * dw / 800.0)));
+            putText(displayFrame, infoLatencies, Point(10, 100 * dw / 800),
+                   FONT_HERSHEY_SIMPLEX, max(0.35, 0.5 * dw / 800.0), colorBLUE,
+                   max(1, static_cast<int>(2 * dw / 800.0)));
+        }
         
         if (!noGui) {
             imshow(windowName, displayFrame);
@@ -1293,10 +1378,11 @@ string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / 
             double dispFps = (statsElapsedMs > 0)
                 ? (displayedFrames - (lastStatsFrameId < 0 ? 0 : lastStatsFrameId)) * 1000.0 / statsElapsedMs
                 : 0.0;
+            lastDispFps = dispFps;
             lastStatsTime = nowStats;
             lastStatsFrameId = displayedFrames;
-            cout << "[PERF] " << format("fps=%.1f | cap=%.1fms det+trk=%.1fms stab=%.1fms disp=%.1fms",
-                    dispFps, processingTimeCapture, processingTimeDetectionTracking,
+            cout << "[PERF] " << format("fps=%.1f | capfps=%d | cap=%.1fms det+trk=%.1fms stab=%.1fms disp=%.1fms",
+                    dispFps, fps.load(), processingTimeCapture, processingTimeDetectionTracking,
                     processingTimeStabilization, processingTimeImshow)
                  << " | stab[upl=" << format("%.1f", processingTimeUpload)
                  << " warp=" << format("%.1f", processingTimeWarp)
@@ -1307,6 +1393,18 @@ string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / 
                  << " pts=" << trackedPoints.load()
                  << " skip=" << framesSkipped.load() << endl;
         }
+
+        // Ограничение частоты превью. disp-таймер уже посчитан выше, поэтому
+        // этот сон не попадает в disp=... и не искажает метрики.
+        if (displayFpsCap > 0.0) {
+            auto nowEnd = chrono::steady_clock::now();
+            auto nextSlot = lastDisplayTime + chrono::duration_cast<chrono::steady_clock::duration>(
+                chrono::duration<double>(1.0 / displayFpsCap));
+            if (nowEnd < nextSlot) {
+                this_thread::sleep_for(nextSlot - nowEnd);
+            }
+        }
+        lastDisplayTime = chrono::steady_clock::now();
     }
     
     if (writer.isOpened()) writer.release();

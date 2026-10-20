@@ -54,3 +54,26 @@ taskset -c 4-5 /tmp/verify_fps 12     # по 12 с на фазы A и B, 5 с н
   `--no-stab --no-gui`, по 3 репа round-robin.
 
 Итоги и выводы — в `../REPORT_120FPS.md` (§8) и `../PERF_PLAN.md` (§7).
+
+## Режим `--max-fps-raw` (окно + сырой захват)
+
+Обычный режим с окном, но камера читается сырым YUYV: серый для трекинга
+собирается из Y-плоскости, BGR для окна — одной конверсией `YUYV2BGR`.
+При `--no-stab` конвертируется сразу ROI, а не весь кадр. Превью по умолчанию
+0.5x / 20 fps — чтобы окно не отбирало CPU у конвейера.
+
+```bash
+# окно + максимальный fps (≈100–110 fps, превью 20 fps)
+./build/myapp_modular --source camera --max-fps-raw --no-stab
+
+# без окна — максимум конвейера (≈104–120 fps)
+./build/myapp_modular --source camera --max-fps-raw --no-stab --no-gui --duration 30
+
+# меньше превью — ещё дешевле для CPU
+VS_DISPLAY_SCALE=0.25 ./build/myapp_modular --source camera --max-fps-raw --no-stab
+```
+
+`[PERF] capfps=N` — частота захвата (конвейера), `fps=` — частота окна.
+Логи: `final_maxfps_nogui2.txt` (без окна), `final_maxfps_gui.txt` (окно),
+`final_normal_nostab.txt`, `final_maxfps_stab.txt`, `final_estimate.txt`
+(регрессии); скриншот окна — `maxfps_raw_window.jpg`.

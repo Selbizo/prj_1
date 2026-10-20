@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>ALT-130 — тест оценки смещения (панорама экрана)</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;
+            font-family:ui-monospace,Menlo,Consolas,monospace;user-select:none}
+  canvas{display:block;position:fixed;top:0;left:0}
+  #hud{position:fixed;top:0;left:0;right:0;padding:10px 14px;color:#0f0;
+       font-size:22px;background:rgba(0,0,0,.65);z-index:10;display:flex;
+       gap:26px;flex-wrap:wrap;align-items:baseline}
+  #hud .k{color:#888}
+  #hud b{color:#fff}
+  #help{position:fixed;bottom:10px;left:10px;color:#bbb;font-size:14px;z-index:10;
+        background:rgba(0,0,0,.75);padding:10px 14px;white-space:pre;display:none;
+        line-height:1.5}
+</style>
+</head>
+<body>
+<div id="hud">
+  <span><span class="k">X=</span><b id="ox">0</b>px</span>
+  <span><span class="k">Y=</span><b id="oy">0</b>px</span>
+  <span><span class="k">шаг=</span><b id="stp">1</b>px</span>
+  <span><span class="k">авто=</span><b id="aut">ВЫКЛ</b></span>
+  <span><span class="k">скор.=</span><b id="vel">60</b>px/с</span>
+  <span><span class="k">t=</span><b id="tm">0.0</b>с</span>
+</div>
+<canvas id="c"></canvas>
+<div id="help">
+УПРАВЛЕНИЕ
+  ← → ↑ ↓        сдвинуть сцену на «шаг» px (Shift — ×10)
+  Пробел         авто-панорама вправо  ВКЛ/ВЫКЛ (сброс таймера)
+  [ ]            шаг: −/+ (1 px)
+  - =            скорость авто: −/+
+  r              сброс X,Y=0,0 и таймера
+  f              полный экран
+  h              эта справка
+  q              скрыть/показать панель(F)
+
+ЧТО ДЕЛАТЬ
+  1. Наведите камеру на экран так, чтобы узор занимал кадр (не ROI-край).
+  2. Пробелом запустите панораму, смотрите строки [EST] (или VS_EST_VERBOSE=1).
+  3. Сравнивайте dx/dy приложения с движением экрана.
+
+ВАЖНО (см. сообщение): экранные px ≠ px кадра.
+k = (px кадра камеры) / (px экрана) — сначала откалибруйте (r, затем
+стрелкой сдвиньте на 100 px и посмотрите, сколько «увидел» детектор).
+</div>
+<script>
+"use strict";
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d', {alpha:false});
+const $ = id => document.getElementById(id);
+
+const dpr = Math.max(1, Math.round(window.devicePixelRatio || 1));
+const TILE = 256;                 // размер тайла в CSS px
+const TILEP = TILE * dpr;         // в device px
+
+// ---- детерминированный узор с обилием углов (для GFTT) ----
+const tile = document.createElement('canvas');
+tile.width = tile.height = TILEP;
+(function buildTile(){
+  const t = tile.getContext('2d');
+  let seed = 0x1234abcd;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  t.fillStyle = '#0d1418';
+  t.fillRect(0, 0, TILEP, TILEP);
+  // регулярная сетка (стабильные углы по всему полю)
+  t.strokeStyle = '#1f6f66';
+  t.lineWidth = Math.max(1, dpr);
+  const g = Math.round(32 * dpr);
+  for (let p = 0; p <= TILEP; p += g) {
+    t.beginPath(); t.moveTo(p, 0); t.lineTo(p, TILEP); t.stroke();
+    t.beginPath(); t.moveTo(0, p); t.lineTo(TILEP, p); t.stroke();
+  }
+  // случайные яркие фигуры с острыми углами
+  for (let i = 0; i < 120; i++) {
+    const x = rnd() * TILEP, y = rnd() * TILEP, s = (5 + rnd() * 30) * dpr;
+    const bright = rnd();
+    t.fillStyle = bright < 0.45 ? '#ffffff' : (bright < 0.8 ? '#ffd24a' : '#4ad2ff');
+    const kind = rnd();
+    if (kind < 0.4) {
+      t.fillRect(x, y, s, s * (0.4 + rnd() * 0.8));
+    } else if (kind < 0.75) {
+      t.beginPath();
+      t.moveTo(x, y); t.lineTo(x + s, y + s * 0.3); t.lineTo(x + s * 0.4, y + s);
+      t.closePath(); t.fill();
+    } else {
+      t.beginPath(); t.arc(x, y, s * 0.5, 0, Math.PI * 2); t.fill();
+    }
+  }
+})();
+
+// ---- состояние ----
+let ox = 0, oy = 0;          // суммарное заданное смещение, px (CSS)
+let step = 1;                // шаг стрелок
+let auto = false;
+let vel = 60;                // скорость авто-панорамы, px/с (по X)
+let t0 = performance.now(), elapsed = 0;
+
+function resize(){
+  cv.width  = Math.round(innerWidth  * dpr);
+  cv.height = Math.round(innerHeight * dpr);
+  cv.style.width  = innerWidth + 'px';
+  cv.style.height = innerHeight + 'px';
+}
+addEventListener('resize', resize);
+resize();
+
+function render(){
+  // смещение тайла (учитываем отрицательные значения через «правильный» модуль)
+  const mx = ((ox % TILE) + TILE) % TILE;
+  const my = ((oy % TILE) + TILE) % TILE;
+  const tx = -Math.round(mx * dpr);
+  const ty = -Math.round(my * dpr);
+  // заливаем тайлом с запасом на один тайл во все стороны
+  for (let y = ty - TILEP; y < cv.height + TILEP; y += TILEP)
+    for (let x = tx - TILEP; x < cv.width + TILEP; x += TILEP)
+      ctx.drawImage(tile, x, y);
+}
+
+let last = performance.now(), accX = 0;
+function tick(now){
+  requestAnimationFrame(tick);
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (auto){
+    elapsed += dt;
+    accX += vel * dt;
+    const d = Math.trunc(accX);
+    if (d !== 0){ ox += d; accX -= d; }   // целые px — без субпиксельного сглаживания
+  }
+  render();
+  $('ox').textContent = ox;
+  $('oy').textContent = oy;
+  $('stp').textContent = step;
+  $('aut').textContent = auto ? 'ВКЛ' : 'ВЫКЛ';
+  $('vel').textContent = vel;
+  $('tm').textContent = elapsed.toFixed(1);
+}
+requestAnimationFrame(tick);
+
+// ---- клавиатура ----
+addEventListener('keydown', e => {
+  const big = e.shiftKey ? 10 : 1;
+  if (e.key === 'ArrowLeft')  { ox -= step * big; e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { ox += step * big; e.preventDefault(); }
+  else if (e.key === 'ArrowUp')    { oy -= step * big; e.preventDefault(); }
+  else if (e.key === 'ArrowDown')  { oy += step * big; e.preventDefault(); }
+  else if (e.key === ' ')  { auto = !auto; accX = 0; if (auto) elapsed = 0; e.preventDefault(); }
+  else if (e.key === '[')  { step = Math.max(1, step - 1); }
+  else if (e.key === ']')  { step = step + 1; }
+  else if (e.key === '-')  { vel = Math.max(1, vel - 5); }
+  else if (e.key === '=' || e.key === '+') { vel += 5; }
+  else if (e.key === 'r')  { ox = oy = 0; accX = 0; elapsed = 0; }
+  else if (e.key === 'f')  { document.documentElement.requestFullscreen?.(); }
+  else if (e.key === 'h')  { const h = $('help'); h.style.display = h.style.display === 'block' ? 'none' : 'block'; }
+  else if (e.key === 'q')  { const h = $('hud'); h.style.display = h.style.display === 'none' ? 'flex' : 'none'; }
+});
+$('help').style.display = 'block';
+setTimeout(() => { $('help').style.display = 'none'; }, 8000);
+</script>
+</body>
+</html>
