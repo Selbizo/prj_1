@@ -1,441 +1,289 @@
-# Видеостабилизатор 1920×1080 на Banana Pi CM4 (Amlogic A311D)
+# MIPI 1080p120: захват, оценка смещения и стабилизация
 
-Многопоточный конвейер захвата, оценки смещения и стабилизации видео.
-Рассчитан на сенсор **OmniVision OS08A10** (MIPI CSI-2, 4 lane, `/dev/video0`)
-и режим **1920×1080 @ 120 fps**, который включается патченным модулем ядра
-`iv009_isp_sensor.ko`.
+Проект для **Banana Pi CM4 (Amlogic A311D)** и сенсора **OmniVision OS08A10**
+(MIPI CSI-2, `/dev/video0`). Рабочий режим — **1920×1080 @ 120 fps**, сырой
+**YUYV** через V4L2.
 
-Основные возможности:
-
-- захват MIPI-камеры OS08A10 через V4L2 (`/dev/videoN`);
-- оценка смещения (`dx`, `dy`, `da`) по точкам;
-- стабилизация через `warpAffine` (OpenCL/GPU Mali-G52 либо CPU);
-- режим максимального fps с сырым захватом YUYV (`--max-fps-raw`);
-- режим «только оценка смещения» без стабилизации и окна (`--estimate-only`);
-- оценка дрейфа по изображению и опциональная выдача `CMD_GYRO_CORRECTION` (#75);
-- интерактивное окно с горячими клавишами и HUD.
+Внутри: захват без GStreamer, быстрый путь `YUYV → GRAY`, оценка `dx/dy/da`
+(GFTT + LK + RANSAC), опциональная стабилизация `warpAffine` (OpenCL/NEON) и
+выдача `CMD_GYRO_CORRECTION (#75)`. Документ — для интеграции исходников в своё
+устройство.
 
 ---
 
-## 1. Платформа и требования
+## 1. Быстрый старт
 
-| Компонент | Значение |
-|---|---|
-| Плата | Banana Pi CM4, Amlogic A311D |
-| Ядро | `4.9.241-BPI-CM4` (arm64) |
-| Сенсор | OS08A10, `/dev/video0` |
-| OpenCV | 4.12.0, `/usr/local/opencv-4.12.0` |
-| Компилятор | `/usr/bin/aarch64-linux-gnu-g++` |
-| GPU | Mali-G52 (OpenCL) |
+Нужны arm64, OpenCV 4.12+, CMake, C++17.
 
-Запускать приложение нужно **от пользователя `pi`** (он в группе `video`).
-`sudo` для запуска не требуется.
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DOpenCV_DIR=/usr/local/opencv-4.12.0/lib/cmake/opencv4
+cmake --build build -j$(nproc)
+```
+
+```bash
+./build/myapp_modular --source camera              # окно + стабилизация
+./build/myapp_modular --source camera --estimate-only --duration 10
+```
+
+Запуск от пользователя с доступом к `/dev/video0` (группа `video`), без `sudo`.
 
 ---
 
-## 2. Сборка
+## 2. Режим 1080p120: модуль ядра
 
-Проект собирается через CMake. Бинарник — `build/myapp_modular`.
+Частоту задаёт сенсорный модуль `iv009_isp_sensor.ko`, а не OpenCV. В рабочем
+режиме изменены только регистры HTS:
 
-```bash
-cd /home/pi/opencv_projects/prj_1
-mkdir -p build
-cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-make -j6
-```
-
-Готовый бинарник:
-
-```
-/home/pi/opencv_projects/prj_1/build/myapp_modular
-```
-
-> **Важно:** собирайте именно `Release` (`-O3`). В уже существующем каталоге
-> `build/` в кэше может стоять `CMAKE_BUILD_TYPE=Debug` — тогда конвейер будет
-> заметно медленнее. Проверить и переконфигурировать:
->
-> ```bash
-> grep '^CMAKE_BUILD_TYPE' build/CMakeCache.txt
-> cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j6
-> ```
-
-Если CMake не находит OpenCV, укажите путь явно:
-
-```bash
-cmake -DCMAKE_BUILD_TYPE=Release \
-      -DOpenCV_DIR=/usr/local/opencv-4.12.0/lib/cmake/opencv4 ..
-```
-
----
-
-## 3. Модули ядра для 120 fps
-
-### 3.1. Что именно нужно
-
-За 120 fps отвечает **только сенсорный модуль** `iv009_isp_sensor.ko`
-с патчем HTS. Остальные модули менять не требуется.
-
-| Модуль | Установленный путь | MD5 | Роль |
-|---|---|---|---|
-| `iv009_isp_sensor.ko` | `/lib/modules/$(uname -r)/kernel/drivers/amlogic/isp_module/subdev/sensor/` | `a171c86b0ed4f3410d78fbdbd7b665f4` | **Обязателен для 120 fps.** Патч HTS 1036 |
-| `iv009_isp.ko` | `/lib/modules/$(uname -r)/kernel/drivers/amlogic/isp_module/v4l2_dev/` | `eb5c71cc58bae1bd65cef2d9e9c97846` | Патч recovery-loop. **На fps не влияет** |
-| `iv009_isp_lens.ko` | `/lib/modules/$(uname -r)/kernel/drivers/amlogic/isp_module/subdev/lens/` | `fa47b294fd547a3976dbff9863c213c8` | Штатный, не изменялся |
-| `iv009_isp_iq.ko` | `/lib/modules/$(uname -r)/kernel/drivers/amlogic/isp_module/subdev/iq/` | `cc72ec5c393179d2cde121b7869c03ff` | Штатный, не изменялся |
-
-Готовые файлы и эталоны для отката лежат в:
-
-```
-/home/pi/Desktop/empty_folder/OS08A10_65fps_2026-10-18/modules/
-├── iv009_isp_sensor_1080p120.ko     # рабочий модуль 120 fps
-├── iv009_isp_sensor_ORIG_BPI.ko     # эталон 60 fps (откат)
-├── iv009_isp_PATCHED.ko             # ISP с патчем recovery-loop
-└── iv009_isp_ORIG_BPI.ko            # оригинальный ISP (откат)
-```
-
-### 3.2. Установка
-
-```bash
-cd /home/pi/Desktop/empty_folder/OS08A10_65fps_2026-10-18
-SENS=/lib/modules/$(uname -r)/kernel/drivers/amlogic/isp_module/subdev/sensor/iv009_isp_sensor.ko
-
-# 1. Сенсорный модуль с HTS 1036 — это и есть включение 120 fps
-sudo cp modules/iv009_isp_sensor_1080p120.ko "$SENS"
-
-# 2. Обязательная полная перезагрузка
-sudo reboot
-```
-
-Модуль `iv009_isp.ko` с патчем recovery-loop **не является рычагом fps**.
-В текущей системе он уже установлен; отдельно копировать его для 120 fps не нужно.
-Если хотите привести ISP к тому же состоянию:
-
-```bash
-ISP=/lib/modules/$(uname -r)/kernel/drivers/amlogic/isp_module/v4l2_dev/iv009_isp.ko
-sudo cp modules/iv009_isp_PATCHED.ko "$ISP"
-sudo reboot
-```
-
-> **Не пытайтесь перезагрузить модули «на живую».** `iv009_isp.ko` не выгружается
-> (`refcnt=2`), а `rmmod`/`insmod` без перезагрузки приводят к Oops в
-> `sbuf_fops_read [iv009_isp]` и помечают ядро как Tainted. Нужна только полная
-> перезагрузка.
-
-### 3.3. Проверка после перезагрузки
-
-```bash
-md5sum /lib/modules/$(uname -r)/kernel/drivers/amlogic/isp_module/subdev/sensor/iv009_isp_sensor.ko
-# ожидается: a171c86b0ed4f3410d78fbdbd7b665f4
-
-lsmod | grep iv009
-# iv009_isp
-# iv009_isp_sensor
-# iv009_isp_lens
-# iv009_isp_iq
-```
-
-Если MD5 совпадает, а `iv009_isp_sensor` загружен — сенсор работает в режиме
-1080p120.
-
-### 3.4. Откат на штатные 60 fps
-
-```bash
-cd /home/pi/Desktop/empty_folder/OS08A10_65fps_2026-10-18
-SENS=/lib/modules/$(uname -r)/kernel/drivers/amlogic/isp_module/subdev/sensor/iv009_isp_sensor.ko
-
-sudo cp modules/iv009_isp_sensor_ORIG_BPI.ko "$SENS"
-sudo reboot
-```
-
-При необходимости вернуть и оригинальный ISP:
-
-```bash
-ISP=/lib/modules/$(uname -r)/kernel/drivers/amlogic/isp_module/v4l2_dev/iv009_isp.ko
-sudo cp modules/iv009_isp_ORIG_BPI.ko "$ISP"
-sudo reboot
-```
-
-### 3.5. В чём суть патча
-
-В сенсорном модуле (`OV08a10_seq.h`, блок
-`setting_1920_1080_4lane_1440m_60fps[]`) уменьшен вдвое горизонтальный период
-строки **HTS**:
-
-| Регистр | Было (60 fps) | Стало (120 fps) |
-|---|---|---|
+| Регистр | 60 fps | 120 fps |
+|---|---:|---:|
 | `0x380c/0x380d` (HTS) | `0x0818` = 2072 | `0x040c` = 1036 |
 | `0x380e/0x380f` (VTS) | `0x0486` = 1158 | без изменений |
 
-```
-fps = SCLK / (HTS · VTS) = 144·10⁶ / (1036 · 1158) = 120.0 fps
-```
+`fps = SCLK / (HTS · VTS) = 144 МГц / (1036 · 1158) = 120.0`.
 
-Используется режим 2×2 binning: полный массив 3840×2160 децимируется до
-1920×1080, поэтому HTS = 1036 меньше 1920 — это нормально.
-
----
-
-## 4. Запуск приложения
-
-Все команды ниже выполняются из корня проекта:
+Готовый модуль — `backup_current_ko/iv009_isp_sensor.ko`
+(MD5 `a171c86b0ed4f3410d78fbdbd7b665f4`).
 
 ```bash
-cd /home/pi/opencv_projects/prj_1
+SENS=/lib/modules/$(uname -r)/kernel/drivers/amlogic/isp_module/subdev/sensor
+sudo cp backup_current_ko/iv009_isp_sensor.ko "$SENS/iv009_isp_sensor.ko"
+sudo reboot
+
+md5sum "$SENS/iv009_isp_sensor.ko"   # a171c86b0ed4f3410d78fbdbd7b665f4
 ```
 
-### 4.1. Интерактивное меню
+Откат на штатные 60 fps: вернуть оригинальный модуль
+(MD5 `95db2e5fc780debd68b891a374d3c279`) и полностью перезагрузиться.
 
-Если не указан `--source`, приложение спрашивает только путь к MIPI-камере:
+Патч готового `.ko` без сборки ядра:
 
 ```bash
-./build/myapp_modular
+python3 patch_scripts/patch_ko.py stock_iv009_isp_sensor.ko -o patched.ko
+python3 patch_scripts/patch_ko.py --check patched.ko
 ```
 
-Enter = `/dev/video0`. Других источников в чистой MIPI-версии нет.
-
-### 4.2. Запуск с явным источником
-
-```bash
-# Камера по умолчанию
-./build/myapp_modular --source camera
-
-# Конкретный узел V4L2
-./build/myapp_modular --source /dev/video0
-```
-
-### 4.3. Режимы и типичные команды
-
-| Задача | Команда | Ожидаемый результат |
-|---|---|---|
-| Только смещение `dx/dy/da`, максимум fps | `./build/myapp_modular --source camera --estimate-only --duration 30` | `[EST] fps` 100–121, end-to-end ~100–105 |
-| Максимум fps без окна | `./build/myapp_modular --source camera --max-fps-raw --no-stab --no-gui --duration 30` | `capfps` 95–120 (в чистых замерах 104–120) |
-| Максимум fps с окном | `./build/myapp_modular --source camera --max-fps-raw --no-stab` | `capfps` 95–110, окно 20 fps |
-| Сырой захват + стабилизация | `./build/myapp_modular --source camera --max-fps-raw` | 45–50 fps |
-| Обычный режим + стабилизация | `./build/myapp_modular --source camera` | ~25–30 fps |
-| Обычный режим без стабилизации | `./build/myapp_modular --source camera --no-stab` | 44–53 fps |
-| Меньше нагрузки от превью | `VS_DISPLAY_SCALE=0.25 ./build/myapp_modular --source camera --max-fps-raw --no-stab` | `capfps` выше, окно дешевле |
-
-Пояснения:
-
-- **`--max-fps-raw`** читает камеру сырым YUYV. Серый кадр для трекинга
-  собирается из Y-плоскости, BGR для окна — одной конверсией `YUYV2BGR`.
-  Без стабилизации конвертируется только ROI, а не весь кадр.
-- В `--estimate-only` флаг `--max-fps-raw` **игнорируется** — там всегда
-  используется самый быстрый путь захвата.
-- В `--max-fps-raw` превью по умолчанию масштабируется до **0.5×** и
-  ограничивается **20 fps**, чтобы окно не отбирало CPU у конвейера.
-- В `--no-gui` HUD не рисуется и превью не масштабируется — только строки
-  `[PERF]`/`[EST]` в консоль.
-- `--no-stab` без `--max-fps-raw` всё равно идёт через полный BGR-путь,
-  поэтому даёт лишь ~45–53 fps.
-
-### 4.4. Опции командной строки
-
-| Опция | Назначение |
-|---|---|
-| `--source <spec>` | `camera` или `/dev/videoN` (только MIPI/V4L2) |
-| `--estimate-only` | только оценка смещения; без стабилизации, окна и HUD |
-| `--duration <sec>` | работать заданное число секунд и корректно выйти |
-| `--no-stab` | стартовать с выключенным контуром стабилизации |
-| `--max-fps-raw` | сырой YUYV-захват + одна конверсия для окна |
-| `--no-gui` | без окна, только консольный вывод |
-| `-h`, `--help` | справка |
-
-Остановка без `--duration` — `Ctrl-C`, либо `ESC`/`Q` в окне.
-
-### 4.5. Переменные окружения
-
-| Переменная | Действие |
-|---|---|
-| `VS_ESTIMATE_ONLY=1` | то же, что `--estimate-only` |
-| `VS_MAX_FPS_RAW=1` | то же, что `--max-fps-raw` |
-| `VS_NO_STAB=1` | то же, что `--no-stab` |
-| `VS_NO_GUI=1` | то же, что `--no-gui` |
-| `VS_FAST_RESIZE=1` | `INTER_LINEAR` вместо `INTER_AREA` при уменьшении кадра для трекинга |
-| `VS_OCV_THREADS=N` | число потоков OpenCV (`0` — не менять) |
-| `VS_PINNED=1\|2\|3` | режим pinned-буферов GPU (`1` — оба, `2` — только src, `3` — только dst) |
-| `VS_WARP_CPU=1` | считать `warpAffine` на CPU, без upload/download на GPU |
-| `VS_VERBOSE=1` | построчный лог кадров (влияет на производительность) |
-| `VS_EST_VERBOSE=1` | печатать смещение на каждом кадре в `--estimate-only` |
-| `VS_DISPLAY_SCALE=0.5` | масштаб превью (по умолчанию `0.5` в `--max-fps-raw`) |
-| `VS_DISPLAY_FPS=20` | ограничение частоты превью (`0` — без ограничения) |
-| `VS_CAM_WIDTH=1920` | запросить ширину камеры |
-| `VS_CAM_HEIGHT=1080` | запросить высоту камеры |
+**Важно:** `iv009_isp.ko` не выгружается (`refcnt=2`). `rmmod`/`insmod` без
+перезагрузки приводят к Oops. Нужен полный `reboot`.
 
 ---
 
-## 5. Горячие клавиши
+## 3. Конвейер и точки интеграции
 
-Работают в обычном режиме с окном.
+```
+/dev/video0  (1920×1080 YUYV, 120 Гц)
+   ▼
+captureThread      read raw → resize Y-плоскости до 384×216
+   ▼
+rawFramesQueue
+   ▼
+detectionThread    GFTT + LK + RANSAC → dx, dy, da, trackingQuality
+   ├── estimate-only: [EST] / [DRIFT] / #75 → выход наружу
+   └── processedFramesQueue → stabilizationThread → displayThread
+```
 
-| Клавиша | Действие |
+| Что | Файл |
 |---|---|
-| `ESC`, `Q` | выход |
-| `Пробел` | пауза (продолжение — любая клавиша) |
-| `F` | сохранить текущий кадр в `frame_XXXXXX.jpg` |
-| `D` | включить/выключить режим отладки |
-| `B` | включить/выключить контур стабилизации (пиковый fps) |
-| `S` / `W` | увеличить/уменьшить область кадра (ROI) |
-| `U` / `I` | увеличить/уменьшить коэффициент заполнения `D` |
-| `J` / `K` | увеличить/уменьшить `NSR` |
+| захват, формат, сырой YUYV, серый | `src/stabilizer/video_stabilizer.cpp`, `captureThread()` |
+| `dx/dy/da` и качество | там же, `detectionAndTrackingThread()` |
+| вывод результата | там же, лямбда `publish()` |
+| дрейф | `src/gyro/drift_estimator.*` |
+| команда #75, UART | `src/gyro/sbgc_protocol.*` |
+
+Для максимума fps используйте `--estimate-only`: работают только захват и
+трекинг, стабилизация и окно не создаются. Свой транспорт (UART, UDP, ROS)
+встраивается в `publish()` вместо `[EST]`.
 
 ---
 
-## 6. Как читать вывод
+## 4. Открытие камеры и сырой YUYV
 
-### Обычный режим и `--max-fps-raw`
+`cap.open()` без явного формата открывает узел в 640×480 RGB3, и драйвер
+уходит в режим ~1–2 fps. Правильный порядок:
 
-```
-[PERF] fps=20.0 | capfps=110 | cap=9.3ms det+trk=3.7ms stab=0.1ms disp=7.5ms | ...
-```
-
-| Поле | Значение |
-|---|---|
-| `fps=` | частота отображения/окна |
-| `capfps=` | частота захвата и прохождения конвейера |
-| `cap=` | время чтения и подготовки кадра |
-| `det+trk=` | детекция + трекинг |
-| `stab=` | стабилизация (upload + warp + download) |
-| `disp=` | отрисовка и `imshow` |
-| `rawQ` / `procQ` / `buf` | заполнение очередей |
-| `skip=` | пропущенные кадры |
-
-В `--max-fps-raw` с окном `fps` намеренно ограничен ~20, а реальную скорость
-показывает **`capfps`**. В `--no-gui` `fps` и `capfps` практически совпадают.
-
-### `--estimate-only`
-
-```
-[EST] fps=115.0 | dx=-1.20 dy=+8.14 da=-0.00121 rad (-0.069 deg) | pts=9 | det+trk=3.68ms cap=8.93ms ... 
-[EST] ИТОГО (end-to-end): 839 кадров за 8.02 с = 104.57 fps
+```cpp
+cv::VideoCapture cap("/dev/video0", cv::CAP_V4L2);
+cap.set(cv::CAP_PROP_FRAME_WIDTH, 1920);
+cap.set(cv::CAP_PROP_FRAME_HEIGHT, 1080);
+cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y','U','Y','V'));
+cap.set(cv::CAP_PROP_CONVERT_RGB, 0);   // сырой YUYV
 ```
 
-- `dx`, `dy` — смещение в пикселях полного кадра;
-- `da` — поворот в радианах и градусах;
-- `pts` — число точек;
-- итоговая строка — реальный end-to-end fps.
+Размер переопределяется через `VS_CAM_WIDTH` / `VS_CAM_HEIGHT`. Рабочий режим —
+1920×1080; промежуточные разрешения могут уводить драйвер в медленный режим.
+
+Сырой кадр приходит плоским буфером `N×1 8UC1`, 2 байта на пиксель:
+
+```cpp
+if (buf.channels() == 1 && buf.total() % (width * 2) == 0)
+    buf = buf.reshape(2, static_cast<int>(buf.total() / (width * 2)));
+
+cvtColor(buf, gray, COLOR_YUV2GRAY_YUY2);  // трекинг
+cvtColor(buf, bgr,  COLOR_YUV2BGR_YUY2);   // окно/стабилизация
+```
+
+Для YUYV начало и ширина ROI должны быть чётными.
 
 ---
 
-## 7. Производительность (замеры на этой плате)
+## 5. Режимы
 
 | Режим | fps | Комментарий |
+|---|---:|---|
+| `--estimate-only` | 100–118 | только захват + трекинг |
+| `--max-fps-raw --no-stab --no-gui` | 100–120 (`capfps`) | максимум конвейера |
+| `--max-fps-raw --no-stab` | 95–110 | превью 0.5× / 20 fps |
+| обычный режим, `--no-stab` | 44–53 | полный BGR-путь |
+| обычный режим + стабилизация | 25–50 | ограничение warp/upload/download |
+
+Флаги: `--max-fps-raw`, `--no-stab`, `--no-gui`, `--duration <sec>`.
+Числа зависят от температуры и фоновой нагрузки (плата без охлаждения, разброс
+до ~20 %).
+
+---
+
+## 6. Цветопередача
+
+Формат **YUYV** подтверждён: сырой буфер 4 147 200 байт, ручная конверсия
+`COLOR_YUV2BGR_YUY2` совпадает со штатным путём OpenCV (разница ~3 единицы BGR
+при фиксированных AE/AWB). Интерпретация как UYVY даёт полосы.
+
+По умолчанию приложение отключает AE/AWB (меньше бросков тока), но оставляет
+случайную точку экспозиции/баланса белого. Если картинка тёмная или с оттенком:
+
+```bash
+./build/myapp_modular --source camera --cam-auto
+```
+
+или задайте контролы вручную:
+
+```bash
+v4l2-ctl -d /dev/video0 \
+  -c white_balance_automatic=0 -c white_balance_temperature=5000 \
+  -c gain_automatic=0 -c gain=100 -c auto_exposure=1
+```
+
+Диагностика: `tools/color_probe.cpp` снимает штатный BGR и ручной YUYV,
+сохраняет PNG и печатает средние. Не ориентируйтесь на
+`v4l2-ctl --get-fmt-video` вне стрима: драйвер может показывать `RGB4`/`META`
+и игнорировать YUYV.
+
+---
+
+## 7. Дрейф и `CMD_GYRO_CORRECTION (#75)`
+
+Оценка: `dx/dy/da` → углы через FOV → угловые скорости → ФНЧ → достоверность →
+поправка #75. Медленный уход подвеса проходит, быстрые движения подавляются.
+Медленное намеренное движение тоже попадёт в оценку.
+
+Спецификация: **SimpleBGC32 Serial API Protocol Specification, стр. 61**
+(<https://www.basecamelectronics.com/files/SimpleBGC_2_6_Serial_Protocol_Specification.pdf>).
+
+Payload — 9 байт:
+
+| Поле | Тип | Смысл |
 |---|---|---|
-| `--estimate-only` | **100–121** | предел сенсора; end-to-end ~100–105 |
-| `--max-fps-raw --no-stab --no-gui` | **95–120** (`capfps`) | окно и HUD отключены; чистые замеры 104–120 |
-| `--max-fps-raw --no-stab` | **95–110** (`capfps`), окно 20 | превью 0.5× / 20 fps |
-| `--max-fps-raw` + стабилизация | **45–50** | ограничено `warp` ~9–10 мс + upload/download ~7 мс |
-| Обычный режим, `--no-stab` | **44–53** | полный BGR-путь дороже raw |
-| Обычный режим + стабилизация | **~25–30** | полный конвейер |
+| `IMU_TYPE` | 1u | 0 — main IMU, 1 — frame IMU |
+| `GYRO_ZERO_CORR[3]` | 2s×3 | поправки X, Y, Z, little-endian |
+| `GYRO_ZERO_HEADING_CORR` | 2s | поправка только по глобальной Z |
 
-Условия замеров: сенсор 120 fps, фоновая нагрузка минимальна.
-Плата без охлаждения: под нагрузкой `ddr_thermal` 70–77 °C, поэтому возможен
-дрейф результатов до ~20 %. Закрытые VS Code/браузер и холодная плата дают
-результаты ближе к верхней границе.
+Единицы — **0.001 gyro sensor unit** (сырые LSB), диапазон `int16`. Для
+16.4 LSB/(град/с) это `16400` единиц на 1 град/с — **гипотеза, требует
+калибровки**.
 
----
+Кадр protocol v1:
 
-## 8. Как проверить, что 120 fps действительно есть
+```
+0x3E | CMD=75 | SIZE=9 | 0x54 | payload[9] | SUM(payload)&0xFF
+3E 4B 09 54 00 00 00 00 00 00 00 00 00 00   # нулевая поправка
+```
 
-### 8.1. Через приложение
+Protocol v2 (2.68b0+) — стартовый байт `0x24` и CRC16 (`0x8005`). Ответ —
+`CMD_CONFIRM (#67)` с `CMD_ID=75`.
 
 ```bash
-./build/myapp_modular --source camera --max-fps-raw --no-stab --no-gui --duration 30
-```
-
-Смотрите на `capfps=` в строках `[PERF]`. На холодной плате ожидается 115–120,
-на горячей или при фоновой нагрузке — 95–115.
-
-Либо в режиме оценки смещения:
-
-```bash
-./build/myapp_modular --source camera --estimate-only --duration 30
-```
-
-В конце будет строка `[EST] ИТОГО (end-to-end): ... fps`.
-
-### 8.2. Независимо от OpenCV
-
-```bash
-cd /home/pi/Desktop/empty_folder/OS08A10_65fps_2026-10-18
-./tools/lightdiag_arm64 300 1920 1080
-```
-
-Утилита читает `/dev/video0` напрямую через V4L2 и печатает средний fps,
-медианный интервал и число уникальных кадров. Ожидается ~119–120 fps
-(на горячей плате — 115–117) и 100 % уникальных кадров.
-
-> **`/dev/video0` монополизируется.** Перед `lightdiag` закройте
-> `myapp_modular`, и наоборот.
->
-> **`v4l2-ctl` показывает недостоверный fps.** Для проверки используйте
-> `lightdiag_arm64` или счётчики приложения (`capfps` / `[EST]`).
-
----
-
-## 9. Типичные проблемы
-
-| Симптом | Причина и решение |
-|---|---|
-| `capfps` ~50–60 вместо 100+ | Установлен штатный сенсорный модуль. Проверьте MD5 `iv009_isp_sensor.ko`, скопируйте `iv009_isp_sensor_1080p120.ko` и **перезагрузитесь** |
-| После `cp` ничего не изменилось | Модуль не перезагружен. Нужен полный `sudo reboot`, `rmmod` делать нельзя |
-| fps ~1–2 | Запрошено промежуточное разрешение. Камера поддерживает только 1920×1080 и 3840×2160 |
-| Камера занята / чёрный кадр | Другой процесс держит `/dev/video0` (например, `lightdiag`) |
-| `--max-fps-raw` даёт ~45 fps | Включена стабилизация: `warp` и upload/download не успевают. Для 100+ fps нужен `--no-stab` |
-| Видео в `--no-stab` обрезано по центру | Это нормально: показывается ROI 1344×756 |
-| Сборка медленная | В `build/CMakeCache.txt` стоит `Debug`. Переконфигурируйте с `-DCMAKE_BUILD_TYPE=Release` |
-| OpenCV не найден | `-DOpenCV_DIR=/usr/local/opencv-4.12.0/lib/cmake/opencv4` |
-| `rmmod iv009_isp` падает с Oops | Так и должно быть (`refcnt=2`). Не выгружайте модули, только перезагрузка |
-| Просадки fps при работе | Закройте VS Code/браузер, проверьте температуру (`ddr_thermal`); плата без охлаждения |
-
----
-
-## 10. Структура проекта
-
-```
-prj_1/
-├── CMakeLists.txt
-├── README.md                  # этот файл
-├── HANDOVER.md                # платформа, модули, сборка сенсорного модуля
-├── REPORT_120FPS.md           # отчёт по производительности и режимам
-├── GYRO_DRIFT_CORRECTION.md   # дрейф по изображению и команда #75
-├── src/
-│   ├── main.cpp               # CLI, меню, запуск
-│   ├── config/                # конфигурация и структуры кадров
-│   ├── stabilizer/            # захват, трекинг, стабилизация, отображение
-│   ├── gyro/                  # протокол SimpleBGC #75 и оценка дрейфа
-│   └── ...
-├── build/
-│   └── myapp_modular          # собранный бинарник
-└── tools/                     # диагностические утилиты 120 fps MIPI
-```
-
-Полезные документы:
-
-- `HANDOVER.md` — как устроен режим 1080p120, установка/откат модулей;
-- `REPORT_120FPS.md` — где теряется fps и что даёт каждый режим;
-- `GYRO_DRIFT_CORRECTION.md` — алгоритм дрейфа, протокол #75 и методика калибровки;
-- `tools/README.md` — диагностические утилиты и команды замеров.
-
----
-
-## 11. Дрейф по изображению и `CMD_GYRO_CORRECTION` (#75)
-
-Добавлен опциональный контур: по межкадровому смещению оцениваются скорости
-рыскания/тангажа/крена, выделяется медленный дрейф и формируется поправка #75.
-
-```bash
-# только отчёт, без порта
 ./build/myapp_modular --source camera --estimate-only --drift-report
-
-# расчёт #75 в dry-run (пакет печатается, ничего не отправляется)
 ./build/myapp_modular --source camera --estimate-only --gyro-correction
-
-# реальная отправка — только после калибровки осей/знаков/масштаба
 ./build/myapp_modular --source camera --estimate-only --gyro-correction \
   --gyro-port /dev/ttyUSB0 --gyro-enable
 ```
 
-По умолчанию порт не открывается: нужен явный `--gyro-enable`.
-Полное описание, единицы, оси и методика экспериментов — в
-[`GYRO_DRIFT_CORRECTION.md`](GYRO_DRIFT_CORRECTION.md).
+По умолчанию — **dry-run** с печатью пакета; реальная отправка только с
+`--gyro-enable`. Настройки: `--gyro-fov-h`, `--gyro-scale`, `--gyro-max`,
+`--gyro-tau`, `--gyro-rate`, `--gyro-axis-*`, `--gyro-sign-*`.
+
+Перед включением отправки откалибруйте:
+
+1. **оси и знаки** — ступенчатая подача через `tools/sbgc_correction`, смотреть
+   реакцию изображения;
+2. **масштаб** — ступеньки 100/500/1000/2000 единиц, измерить `units/(deg/s)`;
+3. **достоверность** — подобрать `VS_GYRO_MIN_CONF`, `VS_GYRO_DEADBAND`, `tau`.
+
+---
+
+## 8. Утилиты
+
+В CMake не входят, собираются вручную. Камера монополизируется: перед запуском
+закройте `myapp_modular`.
+
+| Файл | Назначение |
+|---|---|
+| `probe_capture.cpp` | стоимость стадий захвата |
+| `probe_gray_path.cpp` | побитовая проверка быстрого серого пути |
+| `verify_fps.cpp` | fps и уникальность кадров |
+| `bench_warp_neon.cpp` / `check_warp_neon.cpp` | бенчмарк и проверка NEON-варпа |
+| `color_probe.cpp` | штатный BGR против ручного YUYV→BGR |
+| `sbgc_correction.cpp` | ручная отправка #75 для калибровки |
+| `make_pan_test.cpp` | справочный генератор видео (в приложении не используется) |
+
+```bash
+OC=/usr/local/opencv-4.12.0
+g++ -O3 -std=gnu++17 -isystem $OC/include/opencv4 tools/color_probe.cpp \
+  -o /tmp/color_probe -L$OC/lib -Wl,-rpath,$OC/lib \
+  -lopencv_core -lopencv_imgproc -lopencv_videoio -lopencv_imgcodecs
+/tmp/color_probe
+
+g++ -O3 -std=gnu++17 -Isrc tools/sbgc_correction.cpp \
+  src/gyro/sbgc_protocol.cpp -o /tmp/sbgc_correction
+/tmp/sbgc_correction --self-test
+/tmp/sbgc_correction --x 1000 --y 0 --z 0 --dry-run
+```
+
+---
+
+## 9. Структура, грабли, чек-лист
+
+```
+src/
+  main.cpp                 CLI, запуск
+  config/                  конфигурация и структуры кадров
+  stabilizer/              захват, трекинг, стабилизация, отображение
+  gyro/                    протокол #75 и оценка дрейфа
+  gpu/                     warpAffine: OpenCL и NEON
+  filters/ sync/ utils/    Винер, очередь, вспомогательные функции
+tools/                     диагностика и калибровка
+backup_current_ko/         рабочий набор .ko и md5sums
+patch_scripts/             бинарный патч сенсорного .ko
+build/                     сборка (в git не входит)
+```
+
+Грабли:
+
+- `/dev/video0` занимает только один процесс;
+- `v4l2-ctl` показывает недостоверный fps;
+- после замены `.ko` нужен полный `reboot`;
+- `build/CMakeCache.txt` может содержать `Debug` — переконфигурируйте Release;
+- промежуточные разрешения камеры могут дать ~1–2 fps;
+- отключённые AE/AWB дают тёмную/цветную картинку;
+- не включайте `--gyro-enable` до проверки осей, знаков и пределов; при потере
+  трекинга поправка должна сбрасываться в 0.
+
+Чек-лист внедрения:
+
+1. установить модуль 120 fps, проверить MD5, перезагрузиться;
+2. собрать Release и получить ≥100 fps в `--estimate-only`;
+3. открыть камеру с явным `1920×1080 YUYV` и `CAP_PROP_CONVERT_RGB=0`;
+4. для максимума fps оставить только захват + трекинг;
+5. встроить свой транспорт в `publish()`;
+6. проверить цвет при фиксированных AE/AWB или с `--cam-auto`;
+7. для #75: сначала dry-run, затем калибровка, только потом `--gyro-enable`.
