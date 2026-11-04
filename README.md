@@ -77,8 +77,8 @@ captureThread      read raw → resize Y-плоскости до 384×216
    ▼
 rawFramesQueue
    ▼
-detectionThread    GFTT + LK + RANSAC → dx, dy, da, trackingQuality
-   ├── estimate-only: [EST] / [DRIFT] / #75 → выход наружу
+detectionThread    GFTT + LK + RANSAC → dx, dy, da
+   ├── gyro-correction: dx/dy/da → #75 → UART
    └── processedFramesQueue → stabilizationThread → displayThread
 ```
 
@@ -87,8 +87,7 @@ detectionThread    GFTT + LK + RANSAC → dx, dy, da, trackingQuality
 | захват, формат, сырой YUYV, серый | `src/stabilizer/video_stabilizer.cpp`, `captureThread()` |
 | `dx/dy/da` и качество | там же, `detectionAndTrackingThread()` |
 | вывод результата | там же, лямбда `publish()` |
-| дрейф | `src/gyro/drift_estimator.*` |
-| команда #75, UART | `src/gyro/sbgc_protocol.*` |
+| дрейф и #75 | `src/gyro/gyro_correction.*`, `src/gyro/sbgc_protocol.*` |
 
 Для максимума fps используйте `--estimate-only`: работают только захват и
 трекинг, стабилизация и окно не создаются. Свой транспорт (UART, UDP, ROS)
@@ -186,11 +185,15 @@ R/G/B, а сырой YUY2-кадр тоже пурпурный. В тёмном 
 
 ---
 
-## 7. Дрейф и `CMD_GYRO_CORRECTION (#75)`
+## 7. `CMD_GYRO_CORRECTION (#75)`
 
-Оценка: `dx/dy/da` → углы через FOV → угловые скорости → ФНЧ → достоверность →
-поправка #75. Медленный уход подвеса проходит, быстрые движения подавляются.
-Медленное намеренное движение тоже попадёт в оценку.
+Минимальный путь:
+
+`dx/dy/da` → углы через FOV → угловые скорости → ФНЧ → **интегратор** → #75.
+
+Интегратор нужен потому, что команда задаёт смещение нуля гироскопа, а не
+мгновенную скорость. Пропорциональная поправка уменьшает дрейф лишь частично,
+накопленная — сводит остаточную скорость к нулю.
 
 Спецификация: **SimpleBGC32 Serial API Protocol Specification, стр. 61**
 (<https://www.basecamelectronics.com/files/SimpleBGC_2_6_Serial_Protocol_Specification.pdf>).
@@ -204,8 +207,7 @@ Payload — 9 байт:
 | `GYRO_ZERO_HEADING_CORR` | 2s | поправка только по глобальной Z |
 
 Единицы — **0.001 gyro sensor unit** (сырые LSB), диапазон `int16`. Для
-16.4 LSB/(град/с) это `16400` единиц на 1 град/с — **гипотеза, требует
-калибровки**.
+16.4 LSB/(град/с) это `16400` единиц на 1 град/с — **требует калибровки**.
 
 Кадр protocol v1:
 
@@ -214,26 +216,25 @@ Payload — 9 байт:
 3E 4B 09 54 00 00 00 00 00 00 00 00 00 00   # нулевая поправка
 ```
 
-Protocol v2 (2.68b0+) — стартовый байт `0x24` и CRC16 (`0x8005`). Ответ —
-`CMD_CONFIRM (#67)` с `CMD_ID=75`.
-
 ```bash
-./build/myapp_modular --source camera --estimate-only --drift-report
+# dry-run: считает и печатает пакет, порт не открывает
 ./build/myapp_modular --source camera --estimate-only --gyro-correction
+
+# реальная отправка
 ./build/myapp_modular --source camera --estimate-only --gyro-correction \
   --gyro-port /dev/ttyUSB0 --gyro-enable
 ```
 
-По умолчанию — **dry-run** с печатью пакета; реальная отправка только с
-`--gyro-enable`. Настройки: `--gyro-fov-h`, `--gyro-scale`, `--gyro-max`,
+По умолчанию — **dry-run**; реальная отправка только с `--gyro-enable`.
+Настройки: `--gyro-fov-h`, `--gyro-scale`, `--gyro-max`, `--gyro-ki`,
 `--gyro-tau`, `--gyro-rate`, `--gyro-axis-*`, `--gyro-sign-*`.
 
-Перед включением отправки откалибруйте:
+Перед включением отправки:
 
-1. **оси и знаки** — ступенчатая подача через `tools/sbgc_correction`, смотреть
-   реакцию изображения;
+1. **оси и знаки** — ступенчатая подача через `tools/sbgc_correction`,
+   смотреть реакцию изображения;
 2. **масштаб** — ступеньки 100/500/1000/2000 единиц, измерить `units/(deg/s)`;
-3. **достоверность** — подобрать `VS_GYRO_MIN_CONF`, `VS_GYRO_DEADBAND`, `tau`.
+3. **коэффициенты** — подобрать `ki`, `tau` и `max` по поведению контура.
 
 ---
 
@@ -274,7 +275,7 @@ src/
   main.cpp                 CLI, запуск
   config/                  конфигурация и структуры кадров
   stabilizer/              захват, трекинг, стабилизация, отображение
-  gyro/                    протокол #75 и оценка дрейфа
+  gyro/                    #75: оценка поправки и UART
   gpu/                     warpAffine: OpenCL и NEON
   filters/ sync/ utils/    Винер, очередь, вспомогательные функции
 tools/                     диагностика и калибровка

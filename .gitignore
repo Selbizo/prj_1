@@ -6,3 +6,4 @@ SourceVideos/
 SourceVideosAuto/
 build/
 .cache/
+*.pdf

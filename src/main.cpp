@@ -42,7 +42,6 @@ static void printUsage(const char* prog) {
          << "  --no-gui         без окна (в консоль идут только строки [PERF]/[EST])\n"
          << "  --cam-auto       не отключать автоэкспозицию/автобаланс белого\n"
          << "                     (по умолчанию они выключаются ради тока)\n"
-         << "  --drift-report   печатать оценку дрейфа (yaw/pitch/roll, deg/s, conf)\n"
          << "  --gyro-correction включить расчёт поправки CMD_GYRO_CORRECTION (#75);\n"
          << "                     без --gyro-enable работает dry-run (только лог)\n"
          << "  --gyro-port <dev> последовательный порт (по умолчанию /dev/ttyUSB0)\n"
@@ -51,7 +50,8 @@ static void printUsage(const char* prog) {
          << "  --gyro-fov-h <deg> горизонтальный FOV камеры (по умолчанию 60)\n"
          << "  --gyro-scale <u>  единиц #75 на 1 град/с (по умолчанию 16400)\n"
          << "  --gyro-max <dps>  ограничение поправки, град/с (по умолчанию 2.0)\n"
-         << "  --gyro-tau <sec>  постоянная времени ФНЧ дрейфа (по умолчанию 2.0)\n"
+         << "  --gyro-ki <1/s>   интегральный коэффициент поправки (0.3)\n"
+         << "  --gyro-tau <sec>  постоянная времени ФНЧ (по умолчанию 1.0)\n"
          << "  --gyro-rate <hz>  частота отправки #75 (по умолчанию 20)\n"
          << "  --gyro-axis-pitch|yaw|roll <x|y|z>  соответствие осей #75\n"
          << "  --gyro-sign-pitch|yaw|roll <+1|-1>  знаки осей #75\n"
@@ -59,11 +59,11 @@ static void printUsage(const char* prog) {
          << "Без --source запрашивается путь к MIPI-камере (Enter = /dev/video0).\n"
          << "Переменные окружения: VS_ESTIMATE_ONLY, VS_MAX_FPS_RAW, VS_NO_STAB,\n"
          << "  VS_NO_GUI, VS_FAST_RESIZE, VS_OCV_THREADS, VS_PINNED, VS_WARP_CPU,\n"
-         << "  VS_VERBOSE, VS_EST_VERBOSE, VS_DRIFT_REPORT, VS_GYRO_CORRECTION,\n"
+         << "  VS_VERBOSE, VS_EST_VERBOSE, VS_GYRO_CORRECTION,\n"
          << "  VS_GYRO_PORT, VS_GYRO_BAUD, VS_GYRO_ENABLE, VS_GYRO_FOV_H,\n"
          << "  VS_GYRO_SCALE, VS_GYRO_MAX_DPS, VS_GYRO_TAU, VS_GYRO_RATE,\n"
-         << "  VS_GYRO_MIN_CONF, VS_GYRO_DEADBAND, VS_GYRO_AXIS_PITCH/YAW/ROLL,\n"
-         << "  VS_GYRO_SIGN_PITCH/YAW/ROLL, VS_GYRO_PROTOCOL, VS_CAM_AUTO.\n";
+         << "  VS_GYRO_KI, VS_GYRO_DEADBAND, VS_GYRO_AXIS_PITCH/YAW/ROLL,\n"
+         << "  VS_GYRO_SIGN_PITCH/YAW/ROLL, VS_CAM_AUTO.\n";
 } // end printUsage
 
 // ========================= ГЛАВНАЯ ФУНКЦИЯ =========================
@@ -102,8 +102,6 @@ int main(int argc, char** argv) {
             setenv("VS_NO_GUI", "1", 1);
         } else if (arg == "--cam-auto") {
             setenv("VS_CAM_AUTO", "1", 1);
-        } else if (arg == "--drift-report") {
-            setenv("VS_DRIFT_REPORT", "1", 1);
         } else if (arg == "--gyro-correction") {
             setenv("VS_GYRO_CORRECTION", "1", 1);
         } else if (arg == "--gyro-enable") {
@@ -118,6 +116,8 @@ int main(int argc, char** argv) {
             setenv("VS_GYRO_SCALE", argv[++i], 1);
         } else if (arg == "--gyro-max" && i + 1 < argc) {
             setenv("VS_GYRO_MAX_DPS", argv[++i], 1);
+        } else if (arg == "--gyro-ki" && i + 1 < argc) {
+            setenv("VS_GYRO_KI", argv[++i], 1);
         } else if (arg == "--gyro-tau" && i + 1 < argc) {
             setenv("VS_GYRO_TAU", argv[++i], 1);
         } else if (arg == "--gyro-rate" && i + 1 < argc) {

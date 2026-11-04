@@ -32,7 +32,7 @@ add_executable(myapp_modular
     gpu/warp_affine_neon.cpp
     filters/wiener_filter.cpp
     gyro/sbgc_protocol.cpp
-    gyro/drift_estimator.cpp
+    gyro/gyro_correction.cpp
 )
 
 target_include_directories(myapp_modular PUBLIC

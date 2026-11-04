@@ -38,9 +38,6 @@ struct FrameData {
     int frameId = 0;
     double timestamp = 0;
     bool shouldSkip = false;
-    // 0..1: насколько можно доверять оценке смещения на этом кадре
-    // (число точек, доля inliers RANSAC). Используется оценкой дрейфа.
-    double trackingQuality = 0.0;
     // true — frameCPU уже обрезан до ROI (режим VS_MAX_FPS_RAW без стабилизации).
     // Тогда потоку стабилизации не нужно повторно вырезать ROI, а варп пропускается.
     bool frameCPUIsRoi = false;
