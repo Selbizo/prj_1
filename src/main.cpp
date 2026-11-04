@@ -18,18 +18,11 @@ static bool startsWith(const string& s, const string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 } // end startsWith
 
-static bool isDirectory(const string& path) {
-    struct stat st;
-    return (stat(path.c_str(), &st) == 0) && S_ISDIR(st.st_mode);
-} // end isDirectory
-
 static void printUsage(const char* prog) {
     cout << "Использование: " << prog << " [опции]\n\n"
-         << "  --source <spec>  выбрать источник без интерактивного меню:\n"
-         << "                     camera | /dev/videoN   — камера V4L2\n"
-         << "                     http://... | rtsp://… — IP-камера\n"
-         << "                     /path/to/dir          — папка с кадрами\n"
-         << "                     /path/to/file.mp4     — видеофайл\n"
+         << "  --source <spec>  MIPI-камера V4L2:\n"
+         << "                     camera                — /dev/video0\n"
+         << "                     /dev/videoN           — конкретный узел\n"
          << "  --estimate-only  только вычисление смещения (максимальный fps):\n"
          << "                     два потока (захват + трекинг), без стабилизации\n"
          << "                     и отображения; камера читается сырым YUYV.\n"
@@ -41,7 +34,7 @@ static void printUsage(const char* prog) {
          << "                     даёт ~100-115 fps; в --estimate-only игнорируется.\n"
          << "  --no-gui         без окна (в консоль идут только строки [PERF]/[EST])\n"
          << "  -h, --help       эта справка\n\n"
-         << "Без --source показывается интерактивное меню, как раньше.\n"
+         << "Без --source запрашивается путь к MIPI-камере (Enter = /dev/video0).\n"
          << "Переменные окружения: VS_ESTIMATE_ONLY, VS_MAX_FPS_RAW, VS_NO_STAB,\n"
          << "  VS_NO_GUI, VS_FAST_RESIZE, VS_OCV_THREADS, VS_PINNED, VS_WARP_CPU,\n"
          << "  VS_VERBOSE, VS_EST_VERBOSE.\n";
@@ -107,92 +100,32 @@ int main(int argc, char** argv) {
         cout << "\n[EST] GPU не используется: стабилизация и отображение отключены" << endl;
     }
     
-    bool useVideo = true;
-    string imageFolderPath;
-    
     if (!sourceArg.empty()) {
-        // Источник задан аргументом — меню не показываем, тип определяем по строке.
-        if (startsWith(sourceArg, "http://") || startsWith(sourceArg, "https://") ||
-            startsWith(sourceArg, "rtsp://")) {
-            videoSource = sourceArg;
-            cout << "Источник: IP-камера " << videoSource << endl;
-        } else if (sourceArg == "camera" || sourceArg == "cam") {
+        // Источник задан аргументом: поддерживается только MIPI/V4L2 камера.
+        if (sourceArg == "camera" || sourceArg == "cam") {
             videoSource = "/dev/video0";
-            cout << "Источник: камера " << videoSource << endl;
         } else if (startsWith(sourceArg, "/dev/video")) {
             videoSource = sourceArg;
-            cout << "Источник: камера " << videoSource << endl;
-        } else if (isDirectory(sourceArg)) {
-            useVideo = false;
-            imageFolderPath = normalizePath(sourceArg);
-            cout << "Источник: папка с кадрами " << imageFolderPath << endl;
         } else {
-            videoSource = sourceArg;
-            cout << "Источник: видеофайл " << videoSource << endl;
+            cerr << "Источник не поддерживается: " << sourceArg << endl;
+            cerr << "Доступны только MIPI-камера: camera | /dev/videoN" << endl;
+            return 2;
         }
+        cout << "Источник: MIPI-камера " << videoSource << endl;
     } else {
-    // Выбор режима работы
-    cout << "Выберите режим работы:" << endl;
-    cout << "0. Использовать IP-камеру" << endl;
-    cout << "1. Использовать камеру" << endl;
-    cout << "2. Читать кадры из папки PXL_3" << endl;
-    cout << "3. Читать кадры из папки PXL_4K" << endl;
-    cout << "4. Читать видео из файла" << endl;
-    cout << "Введите 0, 1, 2, 3 или 4: ";
-    
-    int choice;
-    cin >> choice;
-    
-    if (choice == 2) {
-        useVideo = false;
-        cout << "Введите путь к папке с кадрами: ";
-        cin.ignore();
-        getline(cin, imageFolderPath);
-        imageFolderPath = normalizePath(imageFolderPath);
-        if (imageFolderPath.empty()) {
-            imageFolderPath = "/home/pi/opencv_projects/videos/PXL_3/";
-        }
-        cout << "Путь к кадрам: " << imageFolderPath << endl;
-    } else if (choice == 3) {
-        useVideo = false;
-        cout << "Введите путь к папке с кадрами: ";
-        cin.ignore();
-        getline(cin, imageFolderPath);
-        imageFolderPath = normalizePath(imageFolderPath);
-        if (imageFolderPath.empty()) {
-            imageFolderPath = "/home/pi/opencv_projects/videos/PXL_4K/";
-        }
-        cout << "Путь к кадрам: " << imageFolderPath << endl;
-    } else if (choice == 0) {
-        cout << "Введите URL IP-камеры (Enter = по умолчанию): ";
-        cin.ignore();
-        getline(cin, videoSource);
-        if (videoSource.empty()) {
-            videoSource = "http://192.168.0.104:4747/video?500x500";
-        }
-        cout << "IP-камера: " << videoSource << endl;
-    } else if (choice == 4) {
-        cout << "Введите путь к видеофайлу (Enter = по умолчанию): ";
-        cin.ignore();
-        getline(cin, videoSource);
-        if (videoSource.empty()) {
-            videoSource = "/home/selbizo/CV/dataset/videos/PXL_1.mp4";
-        }
-        cout << "Видео: " << videoSource << endl;
-    } else {
-        cout << "Камера: " << videoSource << endl;
-        cin.ignore();
+        // Интерактивное меню: единственный источник — MIPI-камера OS08A10.
+        cout << "MIPI-камера (Enter = /dev/video0): ";
         getline(cin, videoSource);
         if (videoSource.empty()) {
             videoSource = "/dev/video0";
         }
-    }
-    } // end else: интерактивное меню (когда нет --source)
-    
+        cout << "Камера: " << videoSource << endl;
+    } // end else: интерактивный выбор камеры
+
     // Инициализация и запуск стабилизатора
     VideoStabilizer stabilizer;
     stabilizer.setUseFP16(useFP16);
-    stabilizer.start(useVideo, imageFolderPath);
+    stabilizer.start();
     
     if (estimateOnlyArg) {
         cout << "\n[EST] Режим «только оценка смещения». Каждую секунду печатается:"

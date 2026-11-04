@@ -16,8 +16,6 @@
 #include <atomic>
 #include <condition_variable>
 #include <chrono>
-#include <filesystem>
-#include <fstream>
 #include <cmath>
 #include <deque>
 #include <unordered_map>
@@ -28,14 +26,13 @@
 
 using namespace cv;
 using namespace std;
-namespace fs = filesystem;
 
 // ========================= ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ =========================
 int maxCornersConfig = 200;
 double qualityLevelConfig = 0.005;
 int blockSizeConfig = 9;
 double harrisKConfig = 0.005;
-string videoSource = "/home/pi/opencv_projects/videos/PXL_1.mp4";
+string videoSource = "/dev/video0";
 double nsr = 0.01;
 double LEN = 0;
 double THETA = 0.0;
@@ -211,10 +208,10 @@ void VideoStabilizer::setUseFP16(bool value) {
     } // end if (value && !USE_FP16_WARP)
 } // end setUseFP16
 
-void VideoStabilizer::start(bool useVideo, const string& imageFolderPath) {
+void VideoStabilizer::start() {
     running = true;
     
-    workers.emplace_back(&VideoStabilizer::captureThreadWrapper, this, useVideo, imageFolderPath);
+    workers.emplace_back(&VideoStabilizer::captureThreadWrapper, this);
     workers.emplace_back(&VideoStabilizer::detectionAndTrackingThreadWrapper, this);
     if (!estimateOnly) {
         workers.emplace_back(&VideoStabilizer::stabilizationThreadWrapper, this);
@@ -257,9 +254,9 @@ void VideoStabilizer::stop() {
          << ", Skipped: " << framesSkipped << endl;
 } // end stop
 
-void VideoStabilizer::captureThreadWrapper(bool useVideo, const string& imageFolderPath) {
+void VideoStabilizer::captureThreadWrapper() {
     if (captureCore >= 0) setCurrentThreadAffinity(captureCore);
-    captureThread(useVideo, imageFolderPath);
+    captureThread();
 } // end captureThreadWrapper
 
 void VideoStabilizer::detectionAndTrackingThreadWrapper() {
@@ -278,104 +275,73 @@ void VideoStabilizer::displayThreadWrapper() {
 } // end displayThreadWrapper
 
 // ========================= ПОТОК ЗАХВАТА КАДРОВ =========================
-void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath) {
+void VideoStabilizer::captureThread() {
     cv::ocl::setUseOpenCL(false);
     cout << "[CAP] === Capture thread started ===" << endl;
-    cout << "[CAP] Mode: " << (useVideo ? "Camera/Video" : "Image sequence") << endl;
+    cout << "[CAP] Source: MIPI/V4L2 " << videoSource << endl;
     
     VideoCapture cap;
-    double videoFPS = 15.0;
     // true — камера читается сырым YUYV (CAP_PROP_CONVERT_RGB=0), серый кадр
     // получается одной конверсией YUYV->GRAY без промежуточного BGR.
     bool rawCapture = false;
 
-    if (useVideo) {
-        // Определяем тип источника: MIPI/v4l2 камера, IP-камера или видеофайл
-        bool isV4L2Camera = (videoSource.find("/dev/video") != string::npos);
-        bool isIPCamera = (videoSource.substr(0, 7) == "http://");
+    // MIPI камера OS08A10: используем CAP_V4L2 напрямую (не GStreamer).
+    // GStreamer падает с "Internal data stream error" на v4l2src из-за
+    // дискретных размеров сенсора. Также отключаем автоконтролы — снижают
+    // current draw и предотвращают spikes тока, вызывающие выключение платы.
+    auto openCamera = [&]() -> bool {
+        cap.open(videoSource, cv::CAP_V4L2);
+        if (!cap.isOpened()) return false;
 
-        if (isV4L2Camera) {
-            // MIPI камера OS08A10: используем CAP_V4L2 напрямую (не GStreamer).
-            // GStreamer падает с "Internal data stream error" на v4l2src из-за
-            // дискретных размеров сенсора. Также отключаем автоконтролы — снижают
-            // current draw и предотвращают spikes тока, вызывающие выключение платы.
-            cap.open(videoSource, cv::CAP_V4L2);
+        // Явно задаём формат захвата. Без этого OpenCV V4L2 открывает узел
+        // в дефолтном режиме 640x480 RGB3, и драйвер Amlogic уходит в медленный
+        // режим (~1-2 fps). OS08A10 поддерживает только дискретные размеры
+        // 1920x1080 / 3840x2160, поэтому запрашиваем 1920x1080@YUYV — это
+        // сенсорный режим 120 fps (HTS=1036 / VTS=1158). Размер можно переопределить
+        // переменными окружения VS_CAM_WIDTH / VS_CAM_HEIGHT (например, 3840x2160).
+        int reqW = 1920, reqH = 1080;
+        if (const char* e = getenv("VS_CAM_WIDTH"))  { int v = atoi(e); if (v > 0) reqW = v; }
+        if (const char* e = getenv("VS_CAM_HEIGHT")) { int v = atoi(e); if (v > 0) reqH = v; }
+        cap.set(CAP_PROP_FRAME_WIDTH, reqW);
+        cap.set(CAP_PROP_FRAME_HEIGHT, reqH);
+        cap.set(CAP_PROP_FOURCC, VideoWriter::fourcc('Y', 'U', 'Y', 'V'));
+        // Берём сырой YUYV без внутренней конверсии OpenCV в BGR: она делает
+        // полный проход по 4 МБ (~2-3 мс), после которого кадр всё равно
+        // переводится в серый. Одна конверсия YUYV->GRAY вместо двух
+        // BGR->GRAY экономит ~4 мс/кадр (79 -> 116 fps).
+        // maxFpsRaw — то же самое в обычном режиме: серый для трекинга
+        // делаем из Y-плоскости, а полный BGR — одной YUYV->BGR для окна.
+        if (estimateOnly || maxFpsRaw) {
+            cap.set(CAP_PROP_CONVERT_RGB, 0);
+            rawCapture = true;
+        } // end if (estimateOnly || maxFpsRaw)
+        cout << "[CAP] Requested " << reqW << "x" << reqH << " YUYV"
+             << (rawCapture ? " (raw, CONVERT_RGB=0)" : "") << endl;
 
-            // Явно задаём формат захвата. Без этого OpenCV V4L2 открывает узел
-            // в дефолтном режиме 640x480 RGB3, и драйвер Amlogic уходит в медленный
-            // режим (~1-2 fps). OS08A10 поддерживает только дискретные размеры
-            // 1920x1080 / 3840x2160, поэтому запрашиваем 1920x1080@YUYV — это
-            // сенсорный режим 120 fps (HTS=1036 / VTS=1158). Размер можно переопределить
-            // переменными окружения VS_CAM_WIDTH / VS_CAM_HEIGHT (например, 3840x2160).
-            if (cap.isOpened()) {
-                int reqW = 1920, reqH = 1080;
-                if (const char* e = getenv("VS_CAM_WIDTH"))  { int v = atoi(e); if (v > 0) reqW = v; }
-                if (const char* e = getenv("VS_CAM_HEIGHT")) { int v = atoi(e); if (v > 0) reqH = v; }
-                cap.set(CAP_PROP_FRAME_WIDTH, reqW);
-                cap.set(CAP_PROP_FRAME_HEIGHT, reqH);
-                cap.set(CAP_PROP_FOURCC, VideoWriter::fourcc('Y', 'U', 'Y', 'V'));
-                // Берём сырой YUYV без внутренней конверсии OpenCV в BGR: она делает
-                // полный проход по 4 МБ (~2-3 мс), после которого кадр всё равно
-                // переводится в серый. Одна конверсия YUYV->GRAY вместо двух
-                // BGR->GRAY экономит ~4 мс/кадр (79 -> 116 fps).
-                // maxFpsRaw — то же самое в обычном режиме: серый для трекинга
-                // делаем из Y-плоскости, а полный BGR — одной YUYV->BGR для окна.
-                if (estimateOnly || maxFpsRaw) {
-                    cap.set(CAP_PROP_CONVERT_RGB, 0);
-                    rawCapture = true;
-                } // end if (estimateOnly || maxFpsRaw)
-                cout << "[CAP] Requested " << reqW << "x" << reqH << " YUYV"
-                     << (rawCapture ? " (raw, CONVERT_RGB=0)" : "") << endl;
-            }
+        // Отключить автоконтролы сенсора — каждый запуск сбрасывает их заново
+        string ctl = "v4l2-ctl -d " + videoSource + " -c ";
+        int ctlRc = system((ctl + "gain_automatic=0 2>/dev/null").c_str());
+        ctlRc |= system((ctl + "white_balance_automatic=0 2>/dev/null").c_str());
+        ctlRc |= system((ctl + "auto_exposure=0 2>/dev/null").c_str());
+        (void)ctlRc;
+        return true;
+    };
 
-            // Отключить автоконтролы сенсора — каждый запуск сбрасывает их заново
-            system("v4l2-ctl -d /dev/video0 -c gain_automatic=0 2>/dev/null");
-            system("v4l2-ctl -d /dev/video0 -c white_balance_automatic=0 2>/dev/null");
-            system("v4l2-ctl -d /dev/video0 -c auto_exposure=0 2>/dev/null");
+    if (!openCamera()) {
+        cerr << "[CAP] Failed to open V4L2 camera: " << videoSource << endl;
+        running = false;
+        return;
+    } // end if (!openCamera())
 
-            if (!cap.isOpened()) {
-                cerr << "[CAP] Failed to open V4L2 camera: " << videoSource << endl;
-                running = false;
-                return;
-            } // end if (!cap.isOpened())
-        } else {
-            // IP-камера или видеофайл — используем стандартный бэкенд (GStreamer/FFMPEG)
-            cap.open(videoSource);
-            if (!cap.isOpened()) {
-                cerr << "[CAP] Failed to open source: " << videoSource << endl;
-                running = false;
-                return;
-            } // end if (!cap.isOpened())
-        } // end if (isV4L2Camera)
-
-        frameSize = Size(
-            static_cast<int>(cap.get(CAP_PROP_FRAME_WIDTH)),
-            static_cast<int>(cap.get(CAP_PROP_FRAME_HEIGHT))
-        );
-        if (frameSize.width <= 0 || frameSize.height <= 0) {
-            frameSize = Size(640, 480);
-            cap.set(CAP_PROP_FRAME_WIDTH, frameSize.width);
-            cap.set(CAP_PROP_FRAME_HEIGHT, frameSize.height);
-        } // end if (frameSize.width <= 0)
-    } else { // else: не камера
-        Mat firstFrameCPU;
-        loadImage(firstFrameCPU, 0, imageFolderPath);
-        if (firstFrameCPU.empty()) {
-            cerr << "Cannot find any images in the sequence" << endl;
-            running = false;
-            return;
-        }
-        frameSize = Size(firstFrameCPU.cols, firstFrameCPU.rows);
-        videoFPS = 15.0;
-    } // end if (useVideo)
-    
-    if (cap.isOpened() && !useVideo) {
-        double fpsFromFile = cap.get(CAP_PROP_FPS);
-        if (fpsFromFile > 0) videoFPS = fpsFromFile;
-    }
-    
-    bool shouldThrottle = !useVideo;
-    double frameDelayMs = 1000.0 / videoFPS;
+    frameSize = Size(
+        static_cast<int>(cap.get(CAP_PROP_FRAME_WIDTH)),
+        static_cast<int>(cap.get(CAP_PROP_FRAME_HEIGHT))
+    );
+    if (frameSize.width <= 0 || frameSize.height <= 0) {
+        frameSize = Size(1920, 1080);
+        cap.set(CAP_PROP_FRAME_WIDTH, frameSize.width);
+        cap.set(CAP_PROP_FRAME_HEIGHT, frameSize.height);
+    } // end if (frameSize.width <= 0)
     
     frameWidth = frameSize.width;
     frameHeight = frameSize.height;
@@ -403,7 +369,6 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
     
     int frameId = 0;
     auto lastFpsTime = chrono::steady_clock::now();
-    auto lastFrameTime = chrono::steady_clock::now();
     int frameCount = 0;
     int consecutiveSkips = 0;
     Mat grayFullCPU;  // переиспользуемый буфер для grayscale полного кадра
@@ -413,28 +378,15 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
     while (running) {
         auto startTimeCap = chrono::steady_clock::now();
         
-        if (shouldThrottle && frameId > 0) {
-            auto now = chrono::steady_clock::now();
-            auto elapsed = chrono::duration_cast<chrono::milliseconds>(now - lastFrameTime).count();
-            if (elapsed < frameDelayMs) {
-                int sleepMs = static_cast<int>(frameDelayMs - elapsed);
-                if (sleepMs > 0 && sleepMs < 100) {
-                    this_thread::sleep_for(chrono::milliseconds(sleepMs));
-                } // end if (sleepMs > 0)
-            } // end if (elapsed < frameDelayMs)
-        } // end if (shouldThrottle && frameId > 0)
-        
         int totalLag = rawFramesQueue.size() + processedFramesQueue.size();
-        int maxAllowedLag = shouldThrottle ? MAX_PROCESSING_LAG * 2 : MAX_PROCESSING_LAG;
+        int maxAllowedLag = MAX_PROCESSING_LAG;
         
         if (totalLag > maxAllowedLag) {
             consecutiveSkips++;
             if (consecutiveSkips > SKIP_FRAMES_THRESHOLD) {
                 framesSkipped++;
-                if (useVideo) {
-                    Mat dummy;
-                    cap.read(dummy);
-                } // end if (useVideo)
+                Mat dummy;
+                cap.read(dummy);
                 consecutiveSkips = 0;
             } // end if (consecutiveSkips > SKIP_FRAMES_THRESHOLD)
             this_thread::sleep_for(chrono::milliseconds(5));
@@ -447,44 +399,21 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
         frameData.frameId = frameId++;
         
         auto startTimeRead = chrono::steady_clock::now();
-        if (useVideo) { // if: camera/video source
-            bool frameRead = rawCapture
-                ? cap.read(rawYUYV)
-                : cap.read(frameData.frameCPU);
-            if (!frameRead || (rawCapture ? rawYUYV.empty() : frameData.frameCPU.empty())) {
-                cerr << "Failed to read frame from camera, reopening..." << endl;
-                cap.release();
-                cap.open(videoSource);
-                if (rawCapture) cap.set(CAP_PROP_CONVERT_RGB, 0);  // формат сбрасывается при reopen
-                this_thread::sleep_for(chrono::milliseconds(10));
-                continue;
-            } // end if (!frameRead)
-        } else { // else: image sequence
-            if (cap.isOpened()) { // if: cap still open
-                bool frameRead = cap.read(frameData.frameCPU);
-                if (!frameRead || frameData.frameCPU.empty()) {
-                    cout << "Video ended, restarting..." << endl;
-                    cap.set(CAP_PROP_POS_FRAMES, 0);
-                    frameRead = cap.read(frameData.frameCPU);
-                    if (!frameRead || frameData.frameCPU.empty()) {
-                        cout << "Cannot restart video, stopping..." << endl;
-                        running = false;
-                        break;
-                    } // end if (!frameRead)
-                } // end if (!frameRead)
-            } else { // else: cap not open, load from folder
-                loadImage(frameData.frameCPU, frameData.frameId % 1200, imageFolderPath);
-                if (frameData.frameCPU.empty()) {
-                    loadImage(frameData.frameCPU, frameData.frameId % 1200 + 1, imageFolderPath);
-                    if (frameData.frameCPU.empty()) {
-                        cout << "Image sequence ended" << endl;
-                        running = false;
-                        break;
-                    } // end if (frameData.frameCPU.empty())
-                    frameData.frameId++;
-                } // end if (frameData.frameCPU.empty())
-            } // end else: cap not open
-        } // end else: image sequence
+        bool frameRead = rawCapture
+            ? cap.read(rawYUYV)
+            : cap.read(frameData.frameCPU);
+        if (!frameRead || (rawCapture ? rawYUYV.empty() : frameData.frameCPU.empty())) {
+            cerr << "Failed to read frame from camera, reopening..." << endl;
+            cap.release();
+            // При reopen формат сбрасывается, поэтому заново задаём 1920x1080 YUYV
+            // и, при необходимости, CAP_PROP_CONVERT_RGB=0.
+            if (!openCamera()) {
+                running = false;
+                break;
+            } // end if (!openCamera())
+            this_thread::sleep_for(chrono::milliseconds(10));
+            continue;
+        } // end if (!frameRead)
         
         auto endTimeRead = chrono::steady_clock::now();
         
@@ -617,7 +546,6 @@ void VideoStabilizer::captureThread(bool useVideo, const string& imageFolderPath
         double durationPrepMs = chrono::duration_cast<chrono::microseconds>(endTimeCap - endTimeRead).count() / 1000.0;
         processingTimeCapRead = (processingTimeCapRead * 19.0 + durationReadMs) / 20.0;
         processingTimeCapPrep = (processingTimeCapPrep * 19.0 + durationPrepMs) / 20.0;
-        lastFrameTime = chrono::steady_clock::now();
     } // end while (running) — captureThread
     
     if (cap.isOpened()) cap.release();
@@ -1422,10 +1350,6 @@ string infoLatencies = format("Cap: %2.1f | D+T: %2.1f | Stab: %2.1f | Q: %ld / 
 } // end displayThread
 
 // ========================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =========================
-void VideoStabilizer::loadImage(Mat& image, int frame_id, const string& filepath) {
-    ::loadImage(image, frame_id, filepath);
-}
-
 void VideoStabilizer::removeFramePoints(vector<Point2f>& points, double minDistance) {
     ::removeFramePoints(points, minDistance);
 }

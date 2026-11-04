@@ -9,16 +9,10 @@
 #include <vector>
 #include <string>
 
-// ========================= УТИЛИТЫ ПУТИ =========================
-string normalizePath(const string& path);
-
 // ========================= УТИЛИТЫ ПОТОКОВ =========================
 void setThreadAffinity(pthread_t thread, int cpu_core);
 void setCurrentThreadAffinity(int cpu_core);
 int getAvailableCores();
-
-// ========================= УТИЛИТЫ КАРТИНКИ =========================
-void loadImage(cv::Mat& image, int frame_id, const string& filepath);
 
 // ========================= УТИЛИТЫ ТОЧЕК =========================
 void removeFramePoints(vector<cv::Point2f>& points, double minDistance);

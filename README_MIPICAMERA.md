@@ -34,34 +34,21 @@ cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y','U','Y','V'));
 #include <cstdlib>   // для system()
 
 int main() {
-    std::string videoSource = "/dev/video0";  // MIPI камера OS08A10
-    
-    // Определяем тип источника: v4l2, IP-камера или видеофайл
-    bool isV4L2Camera = (videoSource.find("/dev/video") != std::string::npos);
-    
+    const std::string videoSource = "/dev/video0";  // MIPI камера OS08A10
+
     cv::VideoCapture cap;
-    
-    if (isV4L2Camera) {
-        // MIPI камера: используем CAP_V4L2 напрямую (не GStreamer).
-        // Это обходит проблему согласования caps и предотвращает выключение платы.
-        cap.open(videoSource, cv::CAP_V4L2);
-        
-        // Отключить автоконтролы сенсора — снижают current draw и предотвращают spikes тока:
-        system("v4l2-ctl -d /dev/video0 -c gain_automatic=0 2>/dev/null");
-        system("v4l2-ctl -d /dev/video0 -c white_balance_automatic=0 2>/dev/null");
-        system("v4l2-ctl -d /dev/video0 -c auto_exposure=0 2>/dev/null");
-        
-        if (!cap.isOpened()) {
-            std::cerr << "Не удалось открыть камеру: " << videoSource << std::endl;
-            return -1;
-        }
-    } else {
-        // IP-камера или видеофайл — используем стандартный бэкенд (GStreamer/FFMPEG)
-        cap.open(videoSource);
-        if (!cap.isOpened()) {
-            std::cerr << "Не удалось открыть источник: " << videoSource << std::endl;
-            return -1;
-        }
+    // MIPI камера: используем CAP_V4L2 напрямую (не GStreamer).
+    // Это обходит проблему согласования caps и предотвращает выключение платы.
+    cap.open(videoSource, cv::CAP_V4L2);
+
+    // Отключить автоконтролы сенсора — снижают current draw и предотвращают spikes тока:
+    system("v4l2-ctl -d /dev/video0 -c gain_automatic=0 2>/dev/null");
+    system("v4l2-ctl -d /dev/video0 -c white_balance_automatic=0 2>/dev/null");
+    system("v4l2-ctl -d /dev/video0 -c auto_exposure=0 2>/dev/null");
+
+    if (!cap.isOpened()) {
+        std::cerr << "Не удалось открыть камеру: " << videoSource << std::endl;
+        return -1;
     }
     
     // Захват кадров
@@ -107,8 +94,8 @@ v4l2-ctl -d /dev/video0 --set-fmt-video=width=1920,height=1080,pixelformat=YUYV
 ## Сборка проекта
 
 ```bash
-cd build && cmake .. && make -j$(nproc)
-./myapp_test
+cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
+./myapp_modular --source camera
 ```
 
 ## Примечания о сенсоре OS08A10

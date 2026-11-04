@@ -7,7 +7,7 @@
 
 Основные возможности:
 
-- захват V4L2-камеры, IP-камеры, видеофайла или папки с кадрами;
+- захват MIPI-камеры OS08A10 через V4L2 (`/dev/videoN`);
 - оценка смещения (`dx`, `dy`, `da`) по точкам;
 - стабилизация через `warpAffine` (OpenCL/GPU Mali-G52 либо CPU);
 - режим максимального fps с сырым захватом YUYV (`--max-fps-raw`);
@@ -184,36 +184,22 @@ cd /home/pi/opencv_projects/prj_1
 
 ### 4.1. Интерактивное меню
 
-Если не указан `--source`, приложение показывает меню:
+Если не указан `--source`, приложение спрашивает только путь к MIPI-камере:
 
 ```bash
 ./build/myapp_modular
 ```
 
-| Пункт | Источник |
-|---|---|
-| `0` | IP-камера (URL) |
-| `1` | камера `/dev/video0` |
-| `2` | папка `PXL_3` |
-| `3` | папка `PXL_4K` |
-| `4` | видеофайл |
+Enter = `/dev/video0`. Других источников в чистой MIPI-версии нет.
 
 ### 4.2. Запуск с явным источником
 
 ```bash
-# Камера
+# Камера по умолчанию
 ./build/myapp_modular --source camera
+
+# Конкретный узел V4L2
 ./build/myapp_modular --source /dev/video0
-
-# IP-камера
-./build/myapp_modular --source 'http://192.168.0.104:4747/video?500x500'
-./build/myapp_modular --source 'rtsp://user:pass@host/stream'
-
-# Папка с кадрами
-./build/myapp_modular --source /home/pi/opencv_projects/videos/PXL_3/
-
-# Видеофайл
-./build/myapp_modular --source /home/pi/opencv_projects/videos/PXL_1.mp4
 ```
 
 ### 4.3. Режимы и типичные команды
@@ -246,7 +232,7 @@ cd /home/pi/opencv_projects/prj_1
 
 | Опция | Назначение |
 |---|---|
-| `--source <spec>` | `camera`, `/dev/videoN`, `http://…`, `rtsp://…`, папка или видеофайл |
+| `--source <spec>` | `camera` или `/dev/videoN` (только MIPI/V4L2) |
 | `--estimate-only` | только оценка смещения; без стабилизации, окна и HUD |
 | `--duration <sec>` | работать заданное число секунд и корректно выйти |
 | `--no-stab` | стартовать с выключенным контуром стабилизации |
@@ -418,7 +404,7 @@ prj_1/
 │   └── ...
 ├── build/
 │   └── myapp_modular          # собранный бинарник
-└── tools/                     # диагностика, замеры, финальные логи
+└── tools/                     # диагностические утилиты 120 fps MIPI
 ```
 
 Полезные документы:

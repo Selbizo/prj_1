@@ -119,23 +119,22 @@ public:
     ~VideoStabilizer();
 
     void setUseFP16(bool value);
-    void start(bool useCamera, const std::string& imageFolderPath = "");
+    void start();
     void stop();
 
 private:
     // Обёртки для аффинности
-    void captureThreadWrapper(bool useCamera, const std::string& imageFolderPath);
+    void captureThreadWrapper();
     void detectionAndTrackingThreadWrapper();
     void stabilizationThreadWrapper();
     void displayThreadWrapper();
 
     // Потоки
-    void captureThread(bool useCamera, const std::string& imageFolderPath);
+    void captureThread();
     void detectionAndTrackingThread();
     void stabilizationThread();
     void displayThread();
 
     // Вспомогательные
-    void loadImage(cv::Mat& image, int frame_id, const std::string& filepath);
     void removeFramePoints(std::vector<cv::Point2f>& points, double minDistance);
 };

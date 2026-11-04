@@ -1,5 +1,4 @@
 #include "utils/helpers.h"
-#include <fstream>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -7,15 +6,6 @@
 
 using namespace cv;
 using namespace std;
-
-// ========================= УТИЛИТЫ ПУТИ =========================
-string normalizePath(const string& path) {
-    string p = path;
-    if (!p.empty() && p.back() != '/') {
-        p += '/';
-    }
-    return p;
-}
 
 // ========================= УТИЛИТЫ ПОТОКОВ =========================
 void setThreadAffinity(pthread_t thread, int cpu_core) {
@@ -49,30 +39,6 @@ void setCurrentThreadAffinity(int cpu_core) {
 
 int getAvailableCores() {
     return sysconf(_SC_NPROCESSORS_ONLN);
-}
-
-// ========================= УТИЛИТЫ КАРТИНКИ =========================
-void loadImage(Mat& image, int frame_id, const string& filepath) {
-    char file[200];
-    
-    sprintf(file, "image_0/%06d.png", frame_id);
-    string filename = filepath + file;
-    
-    ifstream file_check(filename.c_str());
-    if (file_check.good()) {
-        file_check.close();
-        image = imread(filename, IMREAD_COLOR);
-        if (!image.empty()) return;
-    }
-    
-    sprintf(file, "image_0/%06d.jpg", frame_id);
-    filename = filepath + file;
-    
-    ifstream jpg_check(filename.c_str());
-    if (jpg_check.good()) {
-        jpg_check.close();
-        image = imread(filename, IMREAD_COLOR);
-    }
 }
 
 // ========================= УТИЛИТЫ ТОЧЕК =========================

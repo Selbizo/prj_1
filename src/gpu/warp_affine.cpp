@@ -60,7 +60,7 @@ bool neonWarpEnabled() {
 
 // Сколько потоков давать NEON-ядру. По умолчанию 1: warp идёт в отдельном
 // потоке конвейера, и лишние потоки OpenCV конкурируют с захватом/трекингом
-// (см. PERF_PLAN). VS_WARP_THREADS=N переопределяет.
+// (см. REPORT_120FPS.md). VS_WARP_THREADS=N переопределяет.
 int neonWarpThreads() {
     static const int threads = [] {
         const char* e = getenv("VS_WARP_THREADS");
