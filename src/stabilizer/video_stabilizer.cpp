@@ -77,6 +77,7 @@ VideoStabilizer::VideoStabilizer()
       running(false),
       tauStab(TAU_STAB_MAX / 4),
       kSwitch(0.1),
+      fps(0),
       trackedPoints(0),
       framesProcessed(0),
       framesSkipped(0),
