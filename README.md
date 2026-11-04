@@ -140,6 +140,14 @@ cvtColor(buf, bgr,  COLOR_YUV2BGR_YUY2);   // окно/стабилизация
 Числа зависят от температуры и фоновой нагрузки (плата без охлаждения, разброс
 до ~20 %).
 
+**Warp: GPU или CPU/NEON.** По умолчанию стабилизация считается на GPU (OpenCL).
+`VS_WARP_CPU=1` переключает `warpAffine` на CPU: NEON-ядро (`gpu/warp_affine_neon.cpp`),
+без upload/download кадров. Оно побитово совпадает с `cv::warpAffine` для
+8UC1/8UC3 + `INTER_LINEAR` + `BORDER_CONSTANT`. Число потоков —
+`VS_WARP_THREADS` (по умолчанию 4), `VS_WARP_NEON=0` отключает NEON (тогда
+работает обычный `cv::warpAffine`). На этой плате в живом конвейере GPU-путь
+обычно быстрее: CPU-warp конкурирует за ядра и память с захватом и трекингом.
+
 ---
 
 ## 6. Цветопередача

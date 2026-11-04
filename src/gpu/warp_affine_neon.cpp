@@ -27,20 +27,10 @@ constexpr int kInterBits = 5;
 constexpr int kInterScale = 1 << kInterBits;              // 32
 constexpr int kRoundDelta = (1 << kAbBits) / kInterScale / 2;  // 16
 
-inline uint32_t loadU32(const uchar* p) {
-    uint32_t v;
-    std::memcpy(&v, p, sizeof(v));
-    return v;
-}
-
 inline uint64_t loadU64(const uchar* p) {
     uint64_t v;
     std::memcpy(&v, p, sizeof(v));
     return v;
-}
-
-inline void storeU32(uchar* p, uint32_t v) {
-    std::memcpy(p, &v, sizeof(v));
 }
 
 // Ровно 3 байта, без «залезания» в следующий пиксель (перекрывающиеся

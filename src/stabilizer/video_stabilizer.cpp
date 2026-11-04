@@ -230,8 +230,8 @@ VideoStabilizer::VideoStabilizer()
          << (warpAffineNEONAvailable() ? " (VS_WARP_NEON=0 — отключить)" : "") << endl;
     if (useCpuWarp) {
         const char* wt = getenv("VS_WARP_THREADS");
-        cout << "[WARP] CPU-потоков на warp: " << (wt != nullptr ? atoi(wt) : 1)
-             << " (VS_WARP_THREADS)" << endl;
+        cout << "[WARP] CPU-потоков на warp: " << (wt != nullptr ? atoi(wt) : 4)
+             << " (VS_WARP_THREADS, по умолчанию 4)" << endl;
     } else {
         cout << "[WARP] GPU-буферы: VS_PINNED=" << pinnedMode
              << (pinnedMode == 0 ? " (device)" : " (host memory)") << endl;
