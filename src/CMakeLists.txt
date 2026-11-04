@@ -12,6 +12,13 @@ find_package(OpenCV REQUIRED)
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 
+# NEON-warp должен быть быстрым даже в Debug-сборке (иначе -O0 убивает весь
+# смысл ручной векторизации). Основной проект при этом не трогаем.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/gpu/warp_affine_neon.cpp
+        PROPERTIES COMPILE_OPTIONS "-O3;-DNDEBUG")
+endif()
+
 # Добавляем директории с модулями
 set(SOURCES_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(CONFIG_DIR ${SOURCES_DIR}/config)
@@ -62,6 +69,7 @@ elseif(IS_MODULAR)
         utils/helpers.cpp
         stabilizer/video_stabilizer.cpp
         gpu/warp_affine.cpp
+        gpu/warp_affine_neon.cpp
         filters/wiener_filter.cpp
     )
     

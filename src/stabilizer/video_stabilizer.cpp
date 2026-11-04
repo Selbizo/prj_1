@@ -2,6 +2,7 @@
 #include "sync/thread_safe_queue.h"
 #include "utils/helpers.h"
 #include "gpu/warp_affine.h"
+#include "gpu/warp_affine_neon.h"
 #include "config/config.h"
 #include "config/structures.h"
 
@@ -174,7 +175,13 @@ VideoStabilizer::VideoStabilizer()
     } // end else: пул не переопределён
     cout << "[LOG] Построчный лог кадров: " << (gVerbose ? "ВКЛ (VS_VERBOSE)" : "выкл (VS_VERBOSE=1 для включения)") << endl;
     cout << "[WARP] Режим warpAffine: " << (useCpuWarp ? "CPU" : "GPU (OpenCL)") << endl;
-    if (!useCpuWarp) {
+    cout << "[WARP] NEON-ядро: " << (warpAffineNEONAvailable() ? "доступно" : "нет")
+         << (warpAffineNEONAvailable() ? " (VS_WARP_NEON=0 — отключить)" : "") << endl;
+    if (useCpuWarp) {
+        const char* wt = getenv("VS_WARP_THREADS");
+        cout << "[WARP] CPU-потоков на warp: " << (wt != nullptr ? atoi(wt) : 1)
+             << " (VS_WARP_THREADS)" << endl;
+    } else {
         cout << "[WARP] GPU-буферы: VS_PINNED=" << pinnedMode
              << (pinnedMode == 0 ? " (device)" : " (host memory)") << endl;
     } // end if (!useCpuWarp)
@@ -1061,10 +1068,12 @@ void VideoStabilizer::stabilizationThread() {
                         chrono::duration_cast<chrono::microseconds>(tWarp1 - tWarp0).count() / 1000.0) / 20.0;
                     processingTimeDownload = (processingTimeDownload * 19.0 + 0.0) / 20.0;
                 } else if (useCpuWarp) {
-                    // CPU-вариант: warp прямо из CPU-кадра, без upload/download на GPU
+                    // CPU-вариант: warp прямо из CPU-кадра, без upload/download на GPU.
+                    // warpAffineOptimized внутри использует NEON-ядро (см. gpu/warp_affine_neon.cpp).
                     Mat stabTmp;
-                    warpAffine(frameData.frameCPU, stabTmp, frameData.stabMatrix, roi.size(),
-                               cv::INTER_LINEAR, cv::BORDER_CONSTANT, Scalar());
+                    warpAffineOptimized(frameData.frameCPU, stabTmp, frameData.stabMatrix,
+                                        roi.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT,
+                                        Scalar(), false);
                     auto tWarp1 = chrono::steady_clock::now();
                     processingTimeWarp = (processingTimeWarp * 19.0 +
                         chrono::duration_cast<chrono::microseconds>(tWarp1 - tWarp0).count() / 1000.0) / 20.0;

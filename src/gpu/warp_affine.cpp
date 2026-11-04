@@ -1,7 +1,9 @@
 #include "config/structures.h"
+#include "gpu/warp_affine_neon.h"
 #include <opencv2/core/ocl.hpp>
 #include <iostream>
 #include <exception>
+#include <cstdlib>
 
 using namespace cv;
 using namespace std;
@@ -45,8 +47,46 @@ GPUCapabilities detectGPUCapabilities() {
 }
 
 // ========================= WARP AFFINE =========================
+namespace {
+
+// NEON-ядро включается по умолчанию, VS_WARP_NEON=0 его отключает.
+bool neonWarpEnabled() {
+    static const bool enabled = [] {
+        const char* e = getenv("VS_WARP_NEON");
+        return warpAffineNEONAvailable() && !(e != nullptr && string(e) == "0");
+    }();
+    return enabled;
+}
+
+// Сколько потоков давать NEON-ядру. По умолчанию 1: warp идёт в отдельном
+// потоке конвейера, и лишние потоки OpenCV конкурируют с захватом/трекингом
+// (см. PERF_PLAN). VS_WARP_THREADS=N переопределяет.
+int neonWarpThreads() {
+    static const int threads = [] {
+        const char* e = getenv("VS_WARP_THREADS");
+        int n = (e != nullptr) ? atoi(e) : 1;
+        return n > 0 ? n : 1;
+    }();
+    return threads;
+}
+
+}  // namespace
+
 void warpAffineOptimized(InputArray src, OutputArray dst, InputArray M, Size dsize,
                          int flags, int borderMode, const Scalar& borderValue, bool useFP16) {
+    // CPU-путь (Mat): сначала пробуем NEON-ядро. Оно поддерживает только
+    // 8UC1/8UC3, INTER_LINEAR и BORDER_CONSTANT — остальное отдаём OpenCV.
+    if (src.isMat() && dst.isMat() && neonWarpEnabled()) {
+        Mat srcMat = src.getMat();
+        const Size outSize = (dsize.width > 0 && dsize.height > 0) ? dsize : srcMat.size();
+        dst.create(outSize, srcMat.type());
+        Mat dstMat = dst.getMat();
+        if (warpAffineNEON(srcMat, dstMat, M.getMat(), dsize, flags,
+                           borderMode, borderValue, neonWarpThreads())) {
+            return;
+        }
+    }
+
     if (!USE_FP16_WARP || !useFP16) {
         warpAffine(src, dst, M, dsize, flags, borderMode, borderValue);
         return;
