@@ -6,6 +6,7 @@
 #include "gyro/sbgc_protocol.h"
 #include <opencv2/core/ocl.hpp>
 #include <atomic>
+#include <mutex>
 #include <thread>
 #include <condition_variable>
 
@@ -126,11 +127,17 @@ public:
     sbgc::SbgcSerial gyroLink;
     std::string gyroPort{"/dev/ttyUSB0"};
     int gyroBaud{115200};
-    double gyroSendRateHz{20.0};
+    double gyroSendRateHz{120.0};
     double lastGyroTimeSec{0.0};
-    double lastGyroSendSec{0.0};
     double lastGyroPrintSec{0.0};
     bool gyroConfigured{false};
+
+    // Отдельный поток отправки: держит 120 Гц независимо от просадок трекинга.
+    std::thread gyroSender;
+    std::atomic<bool> gyroSenderRunning{false};
+    std::mutex gyroPacketMutex;
+    sbgc::GyroPacket latestGyroPacket{};
+    void gyroSenderLoop();
 
     VideoStabilizer();
     ~VideoStabilizer();

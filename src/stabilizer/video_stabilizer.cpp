@@ -166,14 +166,19 @@ VideoStabilizer::VideoStabilizer()
         if (port != nullptr && *port != '\0') gyroPort = port;
         gyroBaud = envInt("VS_GYRO_BAUD", 115200);
         gyroDryRun = !envFlag("VS_GYRO_ENABLE");
-        gyroSendRateHz = envNum("VS_GYRO_RATE", 20.0);
+        gyroSendRateHz = envNum("VS_GYRO_RATE", 120.0);
         gyroConfig.fovHdeg = envNum("VS_GYRO_FOV_H", 60.0);
-        gyroConfig.tauSec = envNum("VS_GYRO_TAU", 1.0);
-        gyroConfig.integralGain = envNum("VS_GYRO_KI", 0.3);
+        gyroConfig.tauSec = envNum("VS_GYRO_TAU", 0.5);
+        gyroConfig.windowSamples = envInt("VS_GYRO_WINDOW", 60);
+        gyroConfig.integralGain = envNum("VS_GYRO_KI", 0.5);
+        gyroConfig.leakTauSec = envNum("VS_GYRO_LEAK_TAU", 60.0);
         gyroConfig.deadbandDps = envNum("VS_GYRO_DEADBAND", 0.02);
-        gyroConfig.maxRateDps = 3.0;
+        gyroConfig.maxRateDps = envNum("VS_GYRO_MAX_RATE", 3.0);
         gyroConfig.maxDps = envNum("VS_GYRO_MAX_DPS", 2.0);
         gyroConfig.scaleUnitsPerDps = envNum("VS_GYRO_SCALE", 16400.0);
+        gyroConfig.minPoints = envInt("VS_GYRO_MIN_POINTS", 8);
+        gyroConfig.minQuality = envNum("VS_GYRO_MIN_QUAL", 0.20);
+        gyroConfig.holdSec = envNum("VS_GYRO_HOLD_SEC", 2.0);
         gyroConfig.pitchAxis = envInt("VS_GYRO_AXIS_PITCH", 0);
         gyroConfig.yawAxis = envInt("VS_GYRO_AXIS_YAW", 2);
         gyroConfig.rollAxis = envInt("VS_GYRO_AXIS_ROLL", 1);
@@ -182,9 +187,12 @@ VideoStabilizer::VideoStabilizer()
         gyroConfig.rollSign = envInt("VS_GYRO_SIGN_ROLL", 1) < 0 ? -1 : 1;
         cout << "[GYRO] #75 -> " << gyroPort << " @ " << gyroBaud
              << (gyroDryRun ? " (dry-run)" : " (отправка ВКЛ)")
+             << ", rate=" << gyroSendRateHz << " Hz"
              << ", FOV_H=" << gyroConfig.fovHdeg
-             << ", scale=" << gyroConfig.scaleUnitsPerDps
-             << ", ki=" << gyroConfig.integralGain << endl;
+             << ", window=" << gyroConfig.windowSamples
+             << ", ki=" << gyroConfig.integralGain
+             << ", leak=" << gyroConfig.leakTauSec << " s"
+             << ", scale=" << gyroConfig.scaleUnitsPerDps << endl;
     } // end if (gyroCorrection)
     // Число потоков внутреннего пула OpenCV. В конвейере работают несколько
     // потоков приложения, и каждый вызывает parallel_for_ — пул по умолчанию
@@ -268,6 +276,8 @@ void VideoStabilizer::start() {
             gyroDryRun = true;
         } else {
             cout << "[GYRO] Порт открыт: " << gyroPort << " @ " << gyroBaud << endl;
+            gyroSenderRunning = true;
+            gyroSender = std::thread(&VideoStabilizer::gyroSenderLoop, this);
         }
     } // end if (gyroCorrection && !gyroDryRun)
 
@@ -281,8 +291,37 @@ void VideoStabilizer::start() {
     cout << "Video stabilizer started with " << workers.size() << " threads" << endl;
 } // end start
 
+void VideoStabilizer::gyroSenderLoop() {
+    // Отдельное ядро, чтобы отправка не ждала захват/трекинг.
+    int cores = getAvailableCores();
+    if (cores > 5) {
+        setCurrentThreadAffinity(5);
+    } else if (cores > 2) {
+        setCurrentThreadAffinity(cores - 1);
+    }
+    const double rate = (gyroSendRateHz > 0.0) ? gyroSendRateHz : 120.0;
+    const auto period = chrono::duration<double>(1.0 / rate);
+    auto next = chrono::steady_clock::now();
+    while (running && gyroSenderRunning) {
+        next += chrono::duration_cast<chrono::steady_clock::duration>(period);
+        sbgc::GyroPacket packet{};
+        {
+            lock_guard<mutex> lock(gyroPacketMutex);
+            packet = latestGyroPacket;
+        }
+        if (!gyroLink.write(packet)) {
+            cerr << "[GYRO] Ошибка записи — отправка остановлена" << endl;
+            gyroSenderRunning = false;
+            break;
+        }
+        this_thread::sleep_until(next);
+    }
+} // end gyroSenderLoop
+
 void VideoStabilizer::stop() {
     running = false;
+    gyroSenderRunning = false;
+    if (gyroSender.joinable()) gyroSender.join();
     gyroLink.close();
     rawFramesQueue.shutdown();
     processedFramesQueue.shutdown();
@@ -657,12 +696,18 @@ void VideoStabilizer::detectionAndTrackingThread() {
                         gyro.update(fd.transformFirstDerivative.dx,
                                     fd.transformFirstDerivative.dy,
                                     fd.transformFirstDerivative.da,
-                                    dt, static_cast<int>(fd.points.size()));
+                                    dt, static_cast<int>(fd.points.size()),
+                                    fd.trackingQuality);
                     }
                 }
                 lastGyroTimeSec = nowSec;
 
                 const sbgc::GyroCorrection corr = gyro.packet();
+                const sbgc::GyroPacket packet = sbgc::buildGyroCorrectionV1(corr);
+                {
+                    lock_guard<mutex> lock(gyroPacketMutex);
+                    latestGyroPacket = packet;
+                }
                 if (nowSec - lastGyroPrintSec >= 1.0) {
                     const GyroTelemetry& t = gyro.telemetry();
                     cout << format("[GYRO] yaw=%+.3f pitch=%+.3f roll=%+.3f deg/s"
@@ -672,21 +717,9 @@ void VideoStabilizer::detectionAndTrackingThread() {
                             t.yawCmdDps, t.pitchCmdDps, t.rollCmdDps,
                             corr.x, corr.y, corr.z) << endl;
                     if (gyroDryRun) {
-                        cout << "[GYRO] dry-run: "
-                             << sbgc::toHex(sbgc::buildGyroCorrectionV1(corr)) << endl;
+                        cout << "[GYRO] dry-run: " << sbgc::toHex(packet) << endl;
                     }
                     lastGyroPrintSec = nowSec;
-                }
-
-                double interval = (gyroSendRateHz > 0.0) ? 1.0 / gyroSendRateHz : 0.0;
-                if (nowSec - lastGyroSendSec >= interval) {
-                    if (!gyroDryRun) {
-                        if (!gyroLink.write(sbgc::buildGyroCorrectionV1(corr))) {
-                            cerr << "[GYRO] Ошибка записи в порт — перехожу в dry-run" << endl;
-                            gyroDryRun = true;
-                        }
-                    }
-                    lastGyroSendSec = nowSec;
                 }
             }
         }
@@ -771,8 +804,9 @@ void VideoStabilizer::detectionAndTrackingThread() {
             
             if (goodCount >= 6) {
                 Mat T;
+                Mat inliers;
                 try {
-                    T = estimateAffine2D(goodOld, goodNew, noArray(), RANSAC, 3.0);
+                    T = estimateAffine2D(goodOld, goodNew, inliers, RANSAC, 3.0);
                 } catch (const exception& e) {
                     cerr << "Error in estimateAffine2D: " << e.what() << endl;
                     T = Mat();
@@ -783,11 +817,18 @@ void VideoStabilizer::detectionAndTrackingThread() {
                     double dy = T.at<double>(1, 2) * compressionConfig;
                     double da = atan2(T.at<double>(1, 0), T.at<double>(0, 0));
                     frameData.transformFirstDerivative = TransformParam(dx, dy, da);
+                    int inlierCount = inliers.empty() ? goodCount : countNonZero(inliers);
+                    double inlierRatio = (goodCount > 0)
+                        ? static_cast<double>(inlierCount) / goodCount : 0.0;
+                    frameData.trackingQuality =
+                        min(1.0, static_cast<double>(goodNew.size()) / 40.0) * inlierRatio;
                 } else { // else: T невалиден
                     frameData.transformFirstDerivative = TransformParam(0, 0, 0);
+                    frameData.trackingQuality = 0.0;
                 } // end if (!T.empty())
             } else { // else: goodCount < 6
                 frameData.transformFirstDerivative = TransformParam(0, 0, 0);
+                frameData.trackingQuality = 0.0;
             } // end if (goodCount >= 6)
             
             frameData.points = goodNew;
