@@ -146,6 +146,60 @@ VideoStabilizer::VideoStabilizer()
              << "(полный BGR там не нужен)" << endl;
         maxFpsRaw = false;
     } // end if (maxFpsRaw)
+    // ---- Дрейф по изображению и CMD_GYRO_CORRECTION (#75) ----
+    // Отчёт включается VS_DRIFT_REPORT=1, отправка поправок — VS_GYRO_CORRECTION=1.
+    // Реальная запись в порт требует VS_GYRO_ENABLE=1; без него — dry-run.
+    auto envFlag = [](const char* name) {
+        const char* e = getenv(name);
+        return e != nullptr && string(e) != "0";
+    };
+    auto envNum = [](const char* name, double def) {
+        const char* e = getenv(name);
+        return (e != nullptr) ? atof(e) : def;
+    };
+    auto envInt = [](const char* name, int def) {
+        const char* e = getenv(name);
+        return (e != nullptr) ? atoi(e) : def;
+    };
+    driftReport = envFlag("VS_DRIFT_REPORT");
+    gyroCorrection = envFlag("VS_GYRO_CORRECTION");
+    if (gyroCorrection) driftReport = true;
+    if (driftReport || gyroCorrection) {
+        const char* port = getenv("VS_GYRO_PORT");
+        if (port != nullptr && *port != '\0') gyroPort = port;
+        gyroBaud = envInt("VS_GYRO_BAUD", 115200);
+        gyroProtocol = envInt("VS_GYRO_PROTOCOL", 1);
+        gyroDryRun = !envFlag("VS_GYRO_ENABLE");
+        gyroSendRateHz = envNum("VS_GYRO_RATE", 20.0);
+        driftConfig.fovHdeg = envNum("VS_GYRO_FOV_H", 60.0);
+        driftConfig.fovVdeg = envNum("VS_GYRO_FOV_V", 0.0);
+        driftConfig.tauSec = envNum("VS_GYRO_TAU", 2.0);
+        driftConfig.deadbandDps = envNum("VS_GYRO_DEADBAND", 0.02);
+        driftConfig.maxDps = envNum("VS_GYRO_MAX_DPS", 2.0);
+        driftConfig.minConfidence = envNum("VS_GYRO_MIN_CONF", 0.20);
+        // 0.001 LSB; 16.4 LSB/(град/с) => 16400 единиц на 1 град/с.
+        // Это гипотеза для типового гироскопа SimpleBGC, проверяется экспериментом.
+        driftConfig.scaleUnitsPerDps = envNum("VS_GYRO_SCALE", 16400.0);
+        driftConfig.pitchAxis = envInt("VS_GYRO_AXIS_PITCH", 0);
+        driftConfig.yawAxis = envInt("VS_GYRO_AXIS_YAW", 2);
+        driftConfig.rollAxis = envInt("VS_GYRO_AXIS_ROLL", 1);
+        driftConfig.pitchSign = envInt("VS_GYRO_SIGN_PITCH", 1) < 0 ? -1 : 1;
+        driftConfig.yawSign = envInt("VS_GYRO_SIGN_YAW", 1) < 0 ? -1 : 1;
+        driftConfig.rollSign = envInt("VS_GYRO_SIGN_ROLL", 1) < 0 ? -1 : 1;
+        cout << "[DRIFT] Оценка дрейфа " << (gyroCorrection ? "+ команда #75 в порт" : "(только отчёт)")
+             << ": FOV_H=" << driftConfig.fovHdeg << " deg, tau=" << driftConfig.tauSec
+             << " s, scale=" << driftConfig.scaleUnitsPerDps << " units/(deg/s)" << endl;
+        cout << "[DRIFT] Оси #75: pitch=" << DriftEstimator::axisName(driftConfig.pitchAxis)
+             << "(" << driftConfig.pitchSign << ") yaw=" << DriftEstimator::axisName(driftConfig.yawAxis)
+             << "(" << driftConfig.yawSign << ") roll=" << DriftEstimator::axisName(driftConfig.rollAxis)
+             << "(" << driftConfig.rollSign << ")" << endl;
+        if (gyroCorrection) {
+            cout << "[GYRO] Порт " << gyroPort << " @ " << gyroBaud
+                 << ", protocol v" << gyroProtocol
+                 << (gyroDryRun ? " — DRY-RUN (VS_GYRO_ENABLE=1 для отправки)" : " — отправка ВКЛ")
+                 << endl;
+        }
+    } // end if (driftReport || gyroCorrection)
     // Число потоков внутреннего пула OpenCV. В конвейере работают несколько
     // потоков приложения, и каждый вызывает parallel_for_ — пул по умолчанию
     // (по числу ядер) даёт оверсабскрипшн, и операции идут медленнее, чем
@@ -222,6 +276,15 @@ void VideoStabilizer::start() {
         pthreads.push_back(worker.native_handle());
     } // end for (worker : workers)
     
+    if (gyroCorrection && !gyroDryRun) {
+        if (!gyroLink.open(gyroPort, gyroBaud)) {
+            cerr << "[GYRO] Порт недоступен — перехожу в dry-run" << endl;
+            gyroDryRun = true;
+        } else {
+            cout << "[GYRO] Порт открыт: " << gyroPort << " @ " << gyroBaud << endl;
+        }
+    } // end if (gyroCorrection && !gyroDryRun)
+
     if (captureCore >= 0) setThreadAffinity(pthreads[0], captureCore);
     if (detectionCore >= 0) setThreadAffinity(pthreads[1], detectionCore);
     if (!estimateOnly) {
@@ -234,6 +297,7 @@ void VideoStabilizer::start() {
 
 void VideoStabilizer::stop() {
     running = false;
+    gyroLink.close();
     rawFramesQueue.shutdown();
     processedFramesQueue.shutdown();
     rawFramesQueue.clear();
@@ -318,12 +382,21 @@ void VideoStabilizer::captureThread() {
         cout << "[CAP] Requested " << reqW << "x" << reqH << " YUYV"
              << (rawCapture ? " (raw, CONVERT_RGB=0)" : "") << endl;
 
-        // Отключить автоконтролы сенсора — каждый запуск сбрасывает их заново
-        string ctl = "v4l2-ctl -d " + videoSource + " -c ";
-        int ctlRc = system((ctl + "gain_automatic=0 2>/dev/null").c_str());
-        ctlRc |= system((ctl + "white_balance_automatic=0 2>/dev/null").c_str());
-        ctlRc |= system((ctl + "auto_exposure=0 2>/dev/null").c_str());
-        (void)ctlRc;
+        // Отключить автоконтролы сенсора — каждый запуск сбрасывает их заново.
+        // Это снижает броски тока, но оставляет случайную точку экспозиции/баланса
+        // белого (картинка может быть тёмной или цветной). VS_CAM_AUTO=1 оставляет
+        // AE/AWB автоматическими — полезно для настройки цветопередачи.
+        const char* camAutoEnv = getenv("VS_CAM_AUTO");
+        const bool keepAuto = (camAutoEnv != nullptr && string(camAutoEnv) != "0");
+        if (keepAuto) {
+            cout << "[CAP] AE/AWB оставлены автоматическими (VS_CAM_AUTO=1)" << endl;
+        } else {
+            string ctl = "v4l2-ctl -d " + videoSource + " -c ";
+            int ctlRc = system((ctl + "gain_automatic=0 2>/dev/null").c_str());
+            ctlRc |= system((ctl + "white_balance_automatic=0 2>/dev/null").c_str());
+            ctlRc |= system((ctl + "auto_exposure=0 2>/dev/null").c_str());
+            (void)ctlRc;
+        } // end if (keepAuto)
         return true;
     };
 
@@ -582,6 +655,65 @@ void VideoStabilizer::detectionAndTrackingThread() {
         auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - tStart);
         processingTimeDetectionTracking =
             (processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
+
+        // ---- Дрейф по изображению и, при включении, CMD_GYRO_CORRECTION (#75) ----
+        if (driftReport || gyroCorrection) {
+            if (!driftConfigured && frameWidth > 0 && frameHeight > 0) {
+                driftEstimator.configure(driftConfig, frameWidth, frameHeight);
+                driftConfigured = true;
+            }
+            if (driftConfigured) {
+                double nowSec = chrono::duration<double>(
+                    endTimeDetTrack.time_since_epoch()).count();
+                if (lastDriftTimeSec > 0.0) {
+                    double dt = nowSec - lastDriftTimeSec;
+                    if (dt > 1e-4 && dt <= 0.5) {
+                        lastDrift = driftEstimator.update(
+                            fd.transformFirstDerivative.dx,
+                            fd.transformFirstDerivative.dy,
+                            fd.transformFirstDerivative.da,
+                            dt, static_cast<int>(fd.points.size()),
+                            fd.trackingQuality);
+                    } // end if (dt)
+                } // end if (lastDriftTimeSec)
+                lastDriftTimeSec = nowSec;
+
+                sbgc::GyroCorrection corr = driftEstimator.toGyroCorrection(lastDrift);
+                if (nowSec - lastDriftPrintSec >= 1.0) {
+                    cout << format("[DRIFT] yaw=%+.3f pitch=%+.3f roll=%+.3f deg/s"
+                                   " | angle yaw=%+.2f pitch=%+.2f roll=%+.2f deg"
+                                   " | conf=%.2f pts=%d | #75=(%d,%d,%d)",
+                            lastDrift.yawRateDps, lastDrift.pitchRateDps,
+                            lastDrift.rollRateDps, lastDrift.yawAngleDeg,
+                            lastDrift.pitchAngleDeg, lastDrift.rollAngleDeg,
+                            lastDrift.confidence, static_cast<int>(fd.points.size()),
+                            corr.x, corr.y, corr.z) << endl;
+                    if (gyroCorrection && gyroDryRun) {
+                        auto pkt = (gyroProtocol == 2)
+                            ? sbgc::buildGyroCorrectionV2(corr)
+                            : sbgc::buildGyroCorrectionV1(corr);
+                        cout << "[GYRO] dry-run packet: " << sbgc::toHex(pkt) << endl;
+                    } // end if (gyroCorrection && gyroDryRun)
+                    lastDriftPrintSec = nowSec;
+                } // end if (nowSec - lastDriftPrintSec)
+
+                if (gyroCorrection) {
+                    double interval = (gyroSendRateHz > 0.0) ? 1.0 / gyroSendRateHz : 0.0;
+                    if (nowSec - lastGyroSendSec >= interval) {
+                        if (!gyroDryRun) {
+                            auto pkt = (gyroProtocol == 2)
+                                ? sbgc::buildGyroCorrectionV2(corr)
+                                : sbgc::buildGyroCorrectionV1(corr);
+                            if (!gyroLink.write(pkt)) {
+                                cerr << "[GYRO] Ошибка записи в порт — перехожу в dry-run" << endl;
+                                gyroDryRun = true;
+                            } // end if (!gyroLink.write)
+                        } // end if (!gyroDryRun)
+                        lastGyroSendSec = nowSec;
+                    } // end if (nowSec - lastGyroSendSec)
+                } // end if (gyroCorrection)
+            } // end if (driftConfigured)
+        } // end if (driftReport || gyroCorrection)
         
         if (estimateOnly) {
             estLast = fd.transformFirstDerivative;
@@ -663,8 +795,9 @@ void VideoStabilizer::detectionAndTrackingThread() {
             
             if (goodCount >= 6) {
                 Mat T;
+                Mat inliers;
                 try {
-                    T = estimateAffine2D(goodOld, goodNew, noArray(), RANSAC, 3.0);
+                    T = estimateAffine2D(goodOld, goodNew, inliers, RANSAC, 3.0);
                 } catch (const exception& e) {
                     cerr << "Error in estimateAffine2D: " << e.what() << endl;
                     T = Mat();
@@ -675,11 +808,19 @@ void VideoStabilizer::detectionAndTrackingThread() {
                     double dy = T.at<double>(1, 2) * compressionConfig;
                     double da = atan2(T.at<double>(1, 0), T.at<double>(0, 0));
                     frameData.transformFirstDerivative = TransformParam(dx, dy, da);
+                    int inlierCount = inliers.empty() ? goodCount : countNonZero(inliers);
+                    double inlierRatio = (goodCount > 0)
+                        ? static_cast<double>(inlierCount) / goodCount : 0.0;
+                    // Достоверность: насыщение по числу точек (50) × доля inliers.
+                    frameData.trackingQuality =
+                        min(1.0, static_cast<double>(goodNew.size()) / 50.0) * inlierRatio;
                 } else { // else: T невалиден
                     frameData.transformFirstDerivative = TransformParam(0, 0, 0);
+                    frameData.trackingQuality = 0.0;
                 } // end if (!T.empty())
             } else { // else: goodCount < 6
                 frameData.transformFirstDerivative = TransformParam(0, 0, 0);
+                frameData.trackingQuality = 0.0;
             } // end if (goodCount >= 6)
             
             frameData.points = goodNew;

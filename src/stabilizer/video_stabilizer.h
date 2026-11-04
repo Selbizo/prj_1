@@ -2,6 +2,8 @@
 #include "config/config.h"
 #include "config/structures.h"
 #include "sync/thread_safe_queue.h"
+#include "gyro/drift_estimator.h"
+#include "gyro/sbgc_protocol.h"
 #include <opencv2/core/ocl.hpp>
 #include <atomic>
 #include <thread>
@@ -114,6 +116,25 @@ public:
     // (в отличие от estFrameCount, который сбрасывается каждую секунду). По нему
     // main печатает end-to-end fps: N кадров / фактическое время работы.
     std::atomic<long long> estimateFramesTotal{0};
+
+    // ---- Оценка дрейфа по изображению и выдача CMD_GYRO_CORRECTION (#75) ----
+    // Включается VS_DRIFT_REPORT=1 (только отчёт) или VS_GYRO_CORRECTION=1.
+    // По умолчанию команда не отправляется: нужен VS_GYRO_ENABLE=1, иначе dry-run.
+    bool driftReport{false};
+    bool gyroCorrection{false};
+    bool gyroDryRun{true};
+    DriftConfig driftConfig;
+    DriftEstimator driftEstimator;
+    DriftState lastDrift;
+    sbgc::SbgcSerial gyroLink;
+    std::string gyroPort{"/dev/ttyUSB0"};
+    int gyroBaud{115200};
+    int gyroProtocol{1};
+    double gyroSendRateHz{20.0};
+    double lastDriftTimeSec{0.0};
+    double lastDriftPrintSec{0.0};
+    double lastGyroSendSec{0.0};
+    bool driftConfigured{false};
 
     VideoStabilizer();
     ~VideoStabilizer();

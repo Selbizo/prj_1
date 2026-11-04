@@ -21,6 +21,7 @@ set(GPU_DIR ${SOURCES_DIR}/gpu)
 set(STABILIZER_DIR ${SOURCES_DIR}/stabilizer)
 set(SYNC_DIR ${SOURCES_DIR}/sync)
 set(UTILS_DIR ${SOURCES_DIR}/utils)
+set(GYRO_DIR ${SOURCES_DIR}/gyro)
 
 # Единственная цель проекта — MIPI/V4L2-версия стабилизатора.
 add_executable(myapp_modular
@@ -30,6 +31,8 @@ add_executable(myapp_modular
     gpu/warp_affine.cpp
     gpu/warp_affine_neon.cpp
     filters/wiener_filter.cpp
+    gyro/sbgc_protocol.cpp
+    gyro/drift_estimator.cpp
 )
 
 target_include_directories(myapp_modular PUBLIC
@@ -40,6 +43,7 @@ target_include_directories(myapp_modular PUBLIC
     ${STABILIZER_DIR}
     ${SYNC_DIR}
     ${UTILS_DIR}
+    ${GYRO_DIR}
 )
 
 message(STATUS "=== BUILDING MIPI/V4L2 VERSION (src/main.cpp) ===")

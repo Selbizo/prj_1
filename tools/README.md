@@ -35,6 +35,17 @@ taskset -c 4-5 /tmp/verify_fps 12     # по 12 с на фазы A и B, 5 с н
 # 4. Бенчмарк/проверка NEON-варпа
 $CXX -O3 -std=gnu++17 $INC bench_warp_neon.cpp -o /tmp/bench_warp $LIB
 /tmp/bench_warp
+
+# 5. Диагностика цветового пути: штатный BGR vs ручной YUYV->BGR
+$CXX -O3 -std=gnu++17 $INC color_probe.cpp -o /tmp/color_probe \
+     $LIB -lopencv_imgcodecs
+/tmp/color_probe
+
+# 6. Ручная отправка CMD_GYRO_CORRECTION (#75) для калибровки
+$CXX -O3 -std=gnu++17 -I../src sbgc_correction.cpp ../src/gyro/sbgc_protocol.cpp \
+     -o /tmp/sbgc_correction
+/tmp/sbgc_correction --self-test
+/tmp/sbgc_correction --x 1000 --y 0 --z 0 --dry-run
 ```
 
 ## Сквозная проверка в самом приложении

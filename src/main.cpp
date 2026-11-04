@@ -18,6 +18,13 @@ static bool startsWith(const string& s, const string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
 } // end startsWith
 
+static bool axisIndex(const string& s, int& out) {
+    if (s == "x" || s == "X" || s == "0") { out = 0; return true; }
+    if (s == "y" || s == "Y" || s == "1") { out = 1; return true; }
+    if (s == "z" || s == "Z" || s == "2") { out = 2; return true; }
+    return false;
+} // end axisIndex
+
 static void printUsage(const char* prog) {
     cout << "Использование: " << prog << " [опции]\n\n"
          << "  --source <spec>  MIPI-камера V4L2:\n"
@@ -33,11 +40,30 @@ static void printUsage(const char* prog) {
          << "                     (одна конверсия YUYV->BGR для окна). С --no-stab\n"
          << "                     даёт ~100-115 fps; в --estimate-only игнорируется.\n"
          << "  --no-gui         без окна (в консоль идут только строки [PERF]/[EST])\n"
+         << "  --cam-auto       не отключать автоэкспозицию/автобаланс белого\n"
+         << "                     (по умолчанию они выключаются ради тока)\n"
+         << "  --drift-report   печатать оценку дрейфа (yaw/pitch/roll, deg/s, conf)\n"
+         << "  --gyro-correction включить расчёт поправки CMD_GYRO_CORRECTION (#75);\n"
+         << "                     без --gyro-enable работает dry-run (только лог)\n"
+         << "  --gyro-port <dev> последовательный порт (по умолчанию /dev/ttyUSB0)\n"
+         << "  --gyro-baud <n>   скорость порта (по умолчанию 115200)\n"
+         << "  --gyro-enable     РАЗРЕШИТЬ реальную отправку команды #75\n"
+         << "  --gyro-fov-h <deg> горизонтальный FOV камеры (по умолчанию 60)\n"
+         << "  --gyro-scale <u>  единиц #75 на 1 град/с (по умолчанию 16400)\n"
+         << "  --gyro-max <dps>  ограничение поправки, град/с (по умолчанию 2.0)\n"
+         << "  --gyro-tau <sec>  постоянная времени ФНЧ дрейфа (по умолчанию 2.0)\n"
+         << "  --gyro-rate <hz>  частота отправки #75 (по умолчанию 20)\n"
+         << "  --gyro-axis-pitch|yaw|roll <x|y|z>  соответствие осей #75\n"
+         << "  --gyro-sign-pitch|yaw|roll <+1|-1>  знаки осей #75\n"
          << "  -h, --help       эта справка\n\n"
          << "Без --source запрашивается путь к MIPI-камере (Enter = /dev/video0).\n"
          << "Переменные окружения: VS_ESTIMATE_ONLY, VS_MAX_FPS_RAW, VS_NO_STAB,\n"
          << "  VS_NO_GUI, VS_FAST_RESIZE, VS_OCV_THREADS, VS_PINNED, VS_WARP_CPU,\n"
-         << "  VS_VERBOSE, VS_EST_VERBOSE.\n";
+         << "  VS_VERBOSE, VS_EST_VERBOSE, VS_DRIFT_REPORT, VS_GYRO_CORRECTION,\n"
+         << "  VS_GYRO_PORT, VS_GYRO_BAUD, VS_GYRO_ENABLE, VS_GYRO_FOV_H,\n"
+         << "  VS_GYRO_SCALE, VS_GYRO_MAX_DPS, VS_GYRO_TAU, VS_GYRO_RATE,\n"
+         << "  VS_GYRO_MIN_CONF, VS_GYRO_DEADBAND, VS_GYRO_AXIS_PITCH/YAW/ROLL,\n"
+         << "  VS_GYRO_SIGN_PITCH/YAW/ROLL, VS_GYRO_PROTOCOL, VS_CAM_AUTO.\n";
 } // end printUsage
 
 // ========================= ГЛАВНАЯ ФУНКЦИЯ =========================
@@ -74,6 +100,48 @@ int main(int argc, char** argv) {
             setenv("VS_MAX_FPS_RAW", "1", 1);
         } else if (arg == "--no-gui") {
             setenv("VS_NO_GUI", "1", 1);
+        } else if (arg == "--cam-auto") {
+            setenv("VS_CAM_AUTO", "1", 1);
+        } else if (arg == "--drift-report") {
+            setenv("VS_DRIFT_REPORT", "1", 1);
+        } else if (arg == "--gyro-correction") {
+            setenv("VS_GYRO_CORRECTION", "1", 1);
+        } else if (arg == "--gyro-enable") {
+            setenv("VS_GYRO_ENABLE", "1", 1);
+        } else if (arg == "--gyro-port" && i + 1 < argc) {
+            setenv("VS_GYRO_PORT", argv[++i], 1);
+        } else if (arg == "--gyro-baud" && i + 1 < argc) {
+            setenv("VS_GYRO_BAUD", argv[++i], 1);
+        } else if (arg == "--gyro-fov-h" && i + 1 < argc) {
+            setenv("VS_GYRO_FOV_H", argv[++i], 1);
+        } else if (arg == "--gyro-scale" && i + 1 < argc) {
+            setenv("VS_GYRO_SCALE", argv[++i], 1);
+        } else if (arg == "--gyro-max" && i + 1 < argc) {
+            setenv("VS_GYRO_MAX_DPS", argv[++i], 1);
+        } else if (arg == "--gyro-tau" && i + 1 < argc) {
+            setenv("VS_GYRO_TAU", argv[++i], 1);
+        } else if (arg == "--gyro-rate" && i + 1 < argc) {
+            setenv("VS_GYRO_RATE", argv[++i], 1);
+        } else if ((arg == "--gyro-axis-pitch" || arg == "--gyro-axis-yaw" ||
+                    arg == "--gyro-axis-roll") && i + 1 < argc) {
+            int axis = 0;
+            if (!axisIndex(argv[++i], axis)) {
+                cerr << "Ось должна быть x, y или z: " << arg << endl;
+                return 2;
+            }
+            const char* env = (arg == "--gyro-axis-pitch") ? "VS_GYRO_AXIS_PITCH"
+                            : (arg == "--gyro-axis-yaw")   ? "VS_GYRO_AXIS_YAW"
+                                                           : "VS_GYRO_AXIS_ROLL";
+            string v = to_string(axis);
+            setenv(env, v.c_str(), 1);
+        } else if ((arg == "--gyro-sign-pitch" || arg == "--gyro-sign-yaw" ||
+                    arg == "--gyro-sign-roll") && i + 1 < argc) {
+            int sign = atoi(argv[++i]) < 0 ? -1 : 1;
+            const char* env = (arg == "--gyro-sign-pitch") ? "VS_GYRO_SIGN_PITCH"
+                            : (arg == "--gyro-sign-yaw")   ? "VS_GYRO_SIGN_YAW"
+                                                           : "VS_GYRO_SIGN_ROLL";
+            string v = to_string(sign);
+            setenv(env, v.c_str(), 1);
         } else if (arg == "-h" || arg == "--help") {
             printUsage(argv[0]);
             return 0;
