@@ -73,25 +73,32 @@ python3 patch_scripts/patch_ko.py --check patched.ko
 ```
 /dev/video0  (1920×1080 YUYV, 120 Гц)
    ▼
-captureThread      read raw → resize Y-плоскости до 384×216
+captureThread      read raw → rawFramesQueue (только последний кадр)
    ▼
-rawFramesQueue
+prepareThread      resize Y-плоскости → gray 384×216
+   ▼
+preparedFramesQueue (только последний кадр)
    ▼
 detectionThread    GFTT + LK + RANSAC → dx, dy, da
    ├── gyro-correction: dx/dy/da → #75 → UART
    └── processedFramesQueue → stabilizationThread → displayThread
 ```
 
+В обычном режиме подготовка кадра остаётся в `captureThread`; в
+`--estimate-only`/`--gyro-only` она вынесена в отдельный поток, чтобы
+`cap.read()` следующего кадра не ждал resize/конвертацию.
+
 | Что | Файл |
 |---|---|
-| захват, формат, сырой YUYV, серый | `src/stabilizer/video_stabilizer.cpp`, `captureThread()` |
+| захват, формат, сырой YUYV | `src/stabilizer/video_stabilizer.cpp`, `captureThread()` |
+| подготовка серого | там же, `prepareThread()` (estimate-only) |
 | `dx/dy/da` и качество | там же, `detectionAndTrackingThread()` |
 | вывод результата | там же, лямбда `publish()` |
 | дрейф и #75 | `src/gyro/gyro_correction.*`, `src/gyro/sbgc_protocol.*` |
 
-Для максимума fps используйте `--estimate-only`: работают только захват и
-трекинг, стабилизация и окно не создаются. Свой транспорт (UART, UDP, ROS)
-встраивается в `publish()` вместо `[EST]`.
+Для максимума fps используйте `--estimate-only` или `--gyro-only`: нет окна и
+стабилизации, работают захват, подготовка серого и трекинг. Очереди хранят
+только последний кадр, поэтому при просадке не накапливается задержка.
 
 ---
 
@@ -129,7 +136,7 @@ cvtColor(buf, bgr,  COLOR_YUV2BGR_YUY2);   // окно/стабилизация
 
 | Режим | fps | Комментарий |
 |---|---:|---|
-| `--estimate-only` | 100–118 | только захват + трекинг |
+| `--estimate-only` | 100–118 | захват + подготовка + трекинг; очередями хранится только последний кадр |
 | `--max-fps-raw --no-stab --no-gui` | 100–120 (`capfps`) | максимум конвейера |
 | `--max-fps-raw --no-stab` | 95–110 | превью 0.5× / 20 fps |
 | обычный режим, `--no-stab` | 44–53 | полный BGR-путь |
@@ -138,6 +145,13 @@ cvtColor(buf, bgr,  COLOR_YUV2BGR_YUY2);   // окно/стабилизация
 Флаги: `--max-fps-raw`, `--no-stab`, `--no-gui`, `--duration <sec>`.
 Числа зависят от температуры и фоновой нагрузки (плата без охлаждения, разброс
 до ~20 %).
+
+В `[EST]` и `[GYRO]` выводится `lat=...ms` — задержка от готовности кадра
+(после `cap.read`) до результата. Для снижения задержки:
+
+- `VS_CAM_BUFFERS` — число буферов V4L2 (по умолчанию 4; 1–2 душат поток);
+- очередь хранит только последний кадр;
+- в `--estimate-only` подготовка серого вынесена в отдельный поток.
 
 **Warp: GPU или CPU/NEON.** По умолчанию стабилизация считается на GPU (OpenCL).
 `VS_WARP_CPU=1` переключает `warpAffine` на CPU: NEON-ядро (`gpu/warp_affine_neon.cpp`),
@@ -386,7 +400,7 @@ build/                     сборка (в git не входит)
 1. установить модуль 120 fps, проверить MD5, перезагрузиться;
 2. собрать Release и получить ≥100 fps в `--estimate-only`;
 3. открыть камеру с явным `1920×1080 YUYV` и `CAP_PROP_CONVERT_RGB=0`;
-4. для максимума fps оставить только захват + трекинг;
+4. для максимума fps оставить только захват, подготовку и трекинг;
 5. встроить свой транспорт в `publish()`;
 6. проверить цвет при фиксированных AE/AWB или с `--cam-auto`;
 7. для #75: сначала dry-run, затем калибровка, только потом `--gyro-enable`.

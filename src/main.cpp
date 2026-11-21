@@ -31,7 +31,7 @@ static void printUsage(const char* prog) {
          << "                     camera                — /dev/video0\n"
          << "                     /dev/videoN           — конкретный узел\n"
          << "  --estimate-only  только вычисление смещения (максимальный fps):\n"
-         << "                     два потока (захват + трекинг), без стабилизации\n"
+         << "                     три потока (захват, подготовка, трекинг), без стабилизации\n"
          << "                     и отображения; камера читается сырым YUYV.\n"
          << "                     Каждую секунду печатается строка [EST] с dx/dy/da.\n"
          << "  --duration <sec>  работать заданное число секунд и корректно выйти\n"
@@ -67,7 +67,7 @@ static void printUsage(const char* prog) {
          << "  VS_GYRO_KI, VS_GYRO_LEAK_TAU, VS_GYRO_WINDOW, VS_GYRO_DEADBAND,\n"
          << "  VS_GYRO_MIN_POINTS, VS_GYRO_MIN_QUAL, VS_GYRO_MAX_RATE,\n"
          << "  VS_GYRO_HOLD_SEC, VS_GYRO_AXIS_PITCH/YAW/ROLL,\n"
-         << "  VS_GYRO_SIGN_PITCH/YAW/ROLL, VS_CAM_AUTO.\n";
+         << "  VS_GYRO_SIGN_PITCH/YAW/ROLL, VS_CAM_AUTO, VS_CAM_BUFFERS.\n";
 } // end printUsage
 
 // ========================= ГЛАВНАЯ ФУНКЦИЯ =========================

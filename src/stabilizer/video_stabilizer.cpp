@@ -73,6 +73,7 @@ cv::UMat& getGlobalGGrayWiener() {
 // ========================= КОНСТРУКТОР =========================
 VideoStabilizer::VideoStabilizer() 
     : rawFramesQueue(MAX_QUEUE_SIZE),
+      preparedFramesQueue(1),
       processedFramesQueue(MAX_QUEUE_SIZE),
       running(false),
       tauStab(TAU_STAB_MAX / 4),
@@ -83,6 +84,7 @@ VideoStabilizer::VideoStabilizer()
       framesSkipped(0),
       debugMode(false),
       captureCore(-1),
+      prepareCore(-1),
       detectionCore(-1),
       stabilizationCore(-1),
       displayCore(-1) {
@@ -92,14 +94,16 @@ VideoStabilizer::VideoStabilizer()
     
     if (totalCores >= 6) {
         captureCore = -1;
+        prepareCore = -1;
         detectionCore = -1;
         stabilizationCore = -1;
         displayCore = -1;
     } else if (totalCores >= 4) {
         captureCore = 0;
+        prepareCore = 2;
         detectionCore = 1;
-        stabilizationCore = 2;
-        displayCore = 3;
+        stabilizationCore = 3;
+        displayCore = -1;
     }
     
     detector = GFTTDetector::create(
@@ -125,8 +129,8 @@ VideoStabilizer::VideoStabilizer()
     // VS_NO_STAB=1 — стартовать с выключенным контуром стабилизации (пиковый fps).
     const char* noStab = getenv("VS_NO_STAB");
     stabilizationEnabled = !(noStab != nullptr && string(noStab) != "0");
-    // VS_ESTIMATE_ONLY=1 — только вычисление смещения: два потока (захват + трекинг),
-    // без контура стабилизации и без потока отображения, камера читается сырым YUYV.
+    // VS_ESTIMATE_ONLY=1 — только вычисление смещения: захват, подготовка
+    // кадра и трекинг; контур стабилизации и отображение не создаются.
     const char* estOnly = getenv("VS_ESTIMATE_ONLY");
     estimateOnly = (estOnly != nullptr && string(estOnly) != "0");
     if (estimateOnly) {
@@ -233,8 +237,9 @@ VideoStabilizer::VideoStabilizer()
     cout << "[STAB] Контур стабилизации: "
          << (stabilizationEnabled.load() ? "ВКЛ (клавиша B — выключить)" : "ВЫКЛ (VS_NO_STAB)") << endl;
     if (estimateOnly) {
-        cout << "[EST] Режим «только оценка смещения» (VS_ESTIMATE_ONLY): потоков 2 из 4 — "
-             << "захват сырого YUYV + трекинг; стабилизация и отображение не запускаются"
+        cout << "[EST] Режим «только оценка смещения» (VS_ESTIMATE_ONLY): 3 потока — "
+             << "захват, подготовка серого, трекинг; стабилизация и отображение "
+             << "не запускаются"
              << (captureResizeInterp == INTER_LINEAR ? ", resize=INTER_LINEAR" : "") << endl;
     } // end if (estimateOnly)
 } // end VideoStabilizer::VideoStabilizer()
@@ -260,6 +265,9 @@ void VideoStabilizer::start() {
     running = true;
     
     workers.emplace_back(&VideoStabilizer::captureThreadWrapper, this);
+    if (estimateOnly) {
+        workers.emplace_back(&VideoStabilizer::prepareThreadWrapper, this);
+    }
     workers.emplace_back(&VideoStabilizer::detectionAndTrackingThreadWrapper, this);
     if (!estimateOnly) {
         workers.emplace_back(&VideoStabilizer::stabilizationThreadWrapper, this);
@@ -282,10 +290,15 @@ void VideoStabilizer::start() {
     } // end if (gyroCorrection && !gyroDryRun)
 
     if (captureCore >= 0) setThreadAffinity(pthreads[0], captureCore);
-    if (detectionCore >= 0) setThreadAffinity(pthreads[1], detectionCore);
+    int detIdx = 1;
+    if (estimateOnly) {
+        if (prepareCore >= 0) setThreadAffinity(pthreads[1], prepareCore);
+        detIdx = 2;
+    }
+    if (detectionCore >= 0) setThreadAffinity(pthreads[detIdx], detectionCore);
     if (!estimateOnly) {
-        if (stabilizationCore >= 0) setThreadAffinity(pthreads[2], stabilizationCore);
-        if (displayCore >= 0) setThreadAffinity(pthreads[3], displayCore);
+        if (stabilizationCore >= 0) setThreadAffinity(pthreads[detIdx + 1], stabilizationCore);
+        if (displayCore >= 0) setThreadAffinity(pthreads[detIdx + 2], displayCore);
     } // end if (!estimateOnly)
     
     cout << "Video stabilizer started with " << workers.size() << " threads" << endl;
@@ -324,8 +337,10 @@ void VideoStabilizer::stop() {
     if (gyroSender.joinable()) gyroSender.join();
     gyroLink.close();
     rawFramesQueue.shutdown();
+    preparedFramesQueue.shutdown();
     processedFramesQueue.shutdown();
     rawFramesQueue.clear();
+    preparedFramesQueue.clear();
     processedFramesQueue.clear();
     
     {
@@ -347,6 +362,11 @@ void VideoStabilizer::captureThreadWrapper() {
     if (captureCore >= 0) setCurrentThreadAffinity(captureCore);
     captureThread();
 } // end captureThreadWrapper
+
+void VideoStabilizer::prepareThreadWrapper() {
+    if (prepareCore >= 0) setCurrentThreadAffinity(prepareCore);
+    prepareThread();
+} // end prepareThreadWrapper
 
 void VideoStabilizer::detectionAndTrackingThreadWrapper() {
     if (detectionCore >= 0) setCurrentThreadAffinity(detectionCore);
@@ -381,6 +401,16 @@ void VideoStabilizer::captureThread() {
     auto openCamera = [&]() -> bool {
         cap.open(videoSource, cv::CAP_V4L2);
         if (!cap.isOpened()) return false;
+
+        // Внутренний буфер V4L2. На этой плате 1–2 буфера душат поток
+        // (~86 fps), 4 дают ~113 fps. Низкую задержку обеспечивает не размер
+        // буфера, а очередь «только последний кадр» выше по конвейеру.
+        int camBuffers = 4;
+        if (const char* e = getenv("VS_CAM_BUFFERS")) {
+            int v = atoi(e);
+            if (v > 0) camBuffers = v;
+        }
+        cap.set(CAP_PROP_BUFFERSIZE, camBuffers);
 
         // Явно задаём формат захвата. Без этого OpenCV V4L2 открывает узел
         // в дефолтном режиме 640x480 RGB3, и драйвер Amlogic уходит в медленный
@@ -514,7 +544,14 @@ void VideoStabilizer::captureThread() {
         } // end if (!frameRead)
         
         auto endTimeRead = chrono::steady_clock::now();
+        frameData.timestamp = chrono::duration<double>(
+            endTimeRead.time_since_epoch()).count();
         
+        if (estimateOnly) {
+            // Отдаём сырой буфер отдельному потоку подготовки: захват сразу
+            // уходит на следующий кадр, а resize/конверсия идут параллельно.
+            frameData.frameCPU = std::move(rawYUYV);
+        } else {
         Size compressedSize(frameWidth / compressionConfig, frameHeight / compressionConfig);
         if (compressedSize.width <= 0) compressedSize.width = 1;
         if (compressedSize.height <= 0) compressedSize.height = 1;
@@ -594,39 +631,17 @@ void VideoStabilizer::captureThread() {
             cvtColor(frameData.frameCPU, grayFullCPU, COLOR_BGR2GRAY);
             resize(grayFullCPU, frameData.grayCPU, compressedSize, 0, 0, captureResizeInterp);
         } // end if (rawCapture)
+        } // end else: estimateOnly prepares in separate thread
         
-        bool pushed = false;
-        int retryCount = 0;
-        const int MAX_RETRIES = 3;
-        
-        while (!pushed && retryCount < MAX_RETRIES && running) {
-            if (rawFramesQueue.push(move(frameData))) {
-                pushed = true;
-            } else { // else: push failed
-                retryCount++;
-                this_thread::sleep_for(chrono::milliseconds(5));
-                if (retryCount < MAX_RETRIES && !pushed) {
-                    FrameData newData;
-                    newData.frameId = frameData.frameId;
-                    frameData.frameCPU.copyTo(newData.frameCPU);
-                    frameData.grayCPU.copyTo(newData.grayCPU);
-                    newData.timestamp = frameData.timestamp;
-                    newData.frameCPUIsRoi = frameData.frameCPUIsRoi;
-                    frameData = move(newData);
-                } // end if (retryCount < MAX_RETRIES)
-            } // end else: push failed
-        } // end while (!pushed)
-        
-        if (!pushed) {
-            framesSkipped++;
-            if (framesSkipped % 30 == 0) {
-                cout << "[CAP] Warning: Dropped frame " << frameData.frameId 
-                     << " (queue full). Total skipped: " << framesSkipped << endl;
-            } // end if (framesSkipped % 30 == 0)
-        } else if (gVerbose) { // else: pushed
-            cout << "[CAP] Frame " << frameData.frameId << " captured and pushed to rawFramesQueue (size: " 
+        // Live-конвейер: всегда оставляем только самый свежий кадр.
+        // Если трекинг не успевает, старые кадры не должны копиться в очереди
+        // и добавлять задержку к результату.
+        rawFramesQueue.pushLatest(move(frameData));
+        if (gVerbose) {
+            cout << "[CAP] Frame " << frameId - 1
+                 << " pushed to rawFramesQueue (size: "
                  << rawFramesQueue.size() << ")" << endl;
-        } // end if (!pushed)
+        }
         
         frameCount++;
         auto now = chrono::steady_clock::now();
@@ -643,13 +658,64 @@ void VideoStabilizer::captureThread() {
         double durationReadMs = chrono::duration_cast<chrono::microseconds>(endTimeRead - startTimeRead).count() / 1000.0;
         double durationPrepMs = chrono::duration_cast<chrono::microseconds>(endTimeCap - endTimeRead).count() / 1000.0;
         processingTimeCapRead = (processingTimeCapRead * 19.0 + durationReadMs) / 20.0;
-        processingTimeCapPrep = (processingTimeCapPrep * 19.0 + durationPrepMs) / 20.0;
+        if (!estimateOnly) {
+            processingTimeCapPrep = (processingTimeCapPrep * 19.0 + durationPrepMs) / 20.0;
+        }
     } // end while (running) — captureThread
     
     if (cap.isOpened()) cap.release();
     cout << "Capture thread stopped. Total frames captured: " << frameCount 
          << ", Skipped: " << framesSkipped << endl;
 } // end captureThread
+
+// ========================= ПОТОК ПОДГОТОВКИ КАДРА =========================
+void VideoStabilizer::prepareThread() {
+    cv::ocl::setUseOpenCL(false);
+    cout << "[PREP] === Prepare thread started (raw YUYV -> gray) ===" << endl;
+    Mat smallYUYV;
+    while (running) {
+        FrameData frameData;
+        if (!rawFramesQueue.wait_and_pop(frameData)) break;
+        if (!running) break;
+
+        auto start = chrono::steady_clock::now();
+        Mat yuyv = frameData.frameCPU;
+        if (yuyv.empty()) continue;
+        if (!yuyv.isContinuous()) yuyv = yuyv.clone();
+        if (yuyv.channels() == 1 && frameWidth > 0 &&
+            (yuyv.total() % (static_cast<size_t>(frameWidth) * 2)) == 0) {
+            int rows = static_cast<int>(yuyv.total() / (static_cast<size_t>(frameWidth) * 2));
+            if (rows > 0) yuyv = yuyv.reshape(2, rows);
+        }
+        if (yuyv.channels() != 2) {
+            static bool warned = false;
+            if (!warned) {
+                cerr << "[PREP] Ожидался 2-канальный YUYV, получено ch="
+                     << yuyv.channels() << " — кадр пропущен" << endl;
+                warned = true;
+            }
+            continue;
+        }
+
+        Size compressedSize(frameWidth / compressionConfig, frameHeight / compressionConfig);
+        if (compressedSize.width <= 0) compressedSize.width = 1;
+        if (compressedSize.height <= 0) compressedSize.height = 1;
+        Size convSize(compressedSize.width & ~1, compressedSize.height);
+        if (convSize.width <= 0) convSize.width = 2;
+        if (convSize.height <= 0) convSize.height = 2;
+
+        resize(yuyv, smallYUYV, convSize, 0, 0, INTER_LINEAR);
+        cvtColor(smallYUYV, frameData.grayCPU, COLOR_YUV2GRAY_YUY2);
+        frameData.frameCPU.release();
+
+        preparedFramesQueue.pushLatest(move(frameData));
+
+        auto end = chrono::steady_clock::now();
+        double ms = chrono::duration_cast<chrono::microseconds>(end - start).count() / 1000.0;
+        processingTimeCapPrep = (processingTimeCapPrep * 19.0 + ms) / 20.0;
+    }
+    cout << "[PREP] === Prepare thread stopped ===" << endl;
+} // end prepareThread
 
 // ========================= ПОТОК ДЕТЕКТИРОВАНИЯ И ТРЕКИНГА =========================
 void VideoStabilizer::detectionAndTrackingThread() {
@@ -680,6 +746,11 @@ void VideoStabilizer::detectionAndTrackingThread() {
         auto durationDetTrack = chrono::duration_cast<chrono::microseconds>(endTimeDetTrack - tStart);
         processingTimeDetectionTracking =
             (processingTimeDetectionTracking * 99.0 + durationDetTrack.count() / 1000.0) / 100.0;
+        double latencyMs = -1.0;
+        if (fd.timestamp > 0.0) {
+            latencyMs = (chrono::duration<double>(
+                endTimeDetTrack.time_since_epoch()).count() - fd.timestamp) * 1000.0;
+        }
 
         // ---- CMD_GYRO_CORRECTION (#75) ----
         if (gyroCorrection) {
@@ -712,10 +783,10 @@ void VideoStabilizer::detectionAndTrackingThread() {
                     const GyroTelemetry& t = gyro.telemetry();
                     cout << format("[GYRO] yaw=%+.3f pitch=%+.3f roll=%+.3f deg/s"
                                    " | cmd yaw=%+.3f pitch=%+.3f roll=%+.3f dps"
-                                   " | #75=(%d,%d,%d)",
+                                   " | #75=(%d,%d,%d) | lat=%.2fms",
                             t.yawRateDps, t.pitchRateDps, t.rollRateDps,
                             t.yawCmdDps, t.pitchCmdDps, t.rollCmdDps,
-                            corr.x, corr.y, corr.z) << endl;
+                            corr.x, corr.y, corr.z, latencyMs) << endl;
                     if (gyroDryRun) {
                         cout << "[GYRO] dry-run: " << sbgc::toHex(packet) << endl;
                     }
@@ -738,11 +809,13 @@ void VideoStabilizer::detectionAndTrackingThread() {
             if (elapsedMs >= 1000) {
                 double estFps = estFrameCount * 1000.0 / static_cast<double>(elapsedMs);
                 cout << format("[EST] fps=%.1f | dx=%+.2f dy=%+.2f da=%+.5f rad (%.3f deg) | pts=%d"
-                               " | det+trk=%.2fms cap=%.2fms (read=%.2f prep=%.2f) rawQ=%d skip=%d",
+                               " | det+trk=%.2fms cap=%.2fms (read=%.2f prep=%.2f) lat=%.2fms rawQ=%d skip=%d",
                         estFps, estLast.dx, estLast.dy, estLast.da, estLast.da * 180.0 / CV_PI,
                         trackedPoints.load(), processingTimeDetectionTracking,
                         processingTimeCapture, processingTimeCapRead, processingTimeCapPrep,
-                        static_cast<int>(rawFramesQueue.size()),
+                        latencyMs,
+                        static_cast<int>(estimateOnly ? preparedFramesQueue.size()
+                                                     : rawFramesQueue.size()),
                         framesSkipped.load()) << endl;
                 estFrameCount = 0;
                 estLastTime = now;
@@ -759,9 +832,11 @@ void VideoStabilizer::detectionAndTrackingThread() {
     while (running) {
         FrameData frameData;
         
-        // Блокирующее ожидание кадра вместо опроса с sleep(10ms):
-        // раньше каждый кадр добавлял до 10 мс искусственной задержки.
-        if (!rawFramesQueue.wait_and_pop(frameData)) break;
+        // В estimate-only кадр уже подготовлен отдельным потоком, иначе —
+        // подготовлен в потоке захвата (обычный режим).
+        ThreadSafeQueue<FrameData>* inputQueue =
+            estimateOnly ? &preparedFramesQueue : &rawFramesQueue;
+        if (!inputQueue->wait_and_pop(frameData)) break;
         
         if (!running) break;
         // Проверяем серый кадр, а не полный BGR: в режиме «только оценка смещения»

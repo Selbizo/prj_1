@@ -20,6 +20,7 @@ class VideoStabilizer {
 private:
     // Очереди конвейера
     ThreadSafeQueue<FrameData> rawFramesQueue;
+    ThreadSafeQueue<FrameData> preparedFramesQueue;
     ThreadSafeQueue<FrameData> processedFramesQueue;
 
     // Буфер для отображения
@@ -82,6 +83,7 @@ private:
 
     // Привязка ядер
     int captureCore;
+    int prepareCore;
     int detectionCore;
     int stabilizationCore;
     int displayCore;
@@ -97,7 +99,7 @@ public:
     std::atomic<bool> stabilizationEnabled{true};
 
     // Режим «только оценка смещения» (VS_ESTIMATE_ONLY=1, CLI --estimate-only).
-    // Запускаются ровно два потока — захват и детектирование/трекинг; контур
+    // Запускаются захват, подготовка кадра и детектирование/трекинг; контур
     // стабилизации и поток отображения не создаются. Кадр с камеры берётся сырым
     // (YUYV, CAP_PROP_CONVERT_RGB=0) и сразу приводится к серому 384x216, полный
     // BGR-кадр не материализуется. На выходе — dx, dy, da на кадр (строка [EST]).
@@ -149,12 +151,14 @@ public:
 private:
     // Обёртки для аффинности
     void captureThreadWrapper();
+    void prepareThreadWrapper();
     void detectionAndTrackingThreadWrapper();
     void stabilizationThreadWrapper();
     void displayThreadWrapper();
 
     // Потоки
     void captureThread();
+    void prepareThread();
     void detectionAndTrackingThread();
     void stabilizationThread();
     void displayThread();

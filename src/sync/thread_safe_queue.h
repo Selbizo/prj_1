@@ -35,6 +35,17 @@ public:
         queue_.pop_front();
         return true;
     }
+
+    // Оставить только самый свежий кадр. Для live-конвейера это важнее полноты:
+    // старые кадры всё равно не нужны, а очередь из них добавляет задержку.
+    bool pushLatest(T data) {
+        lock_guard<mutex> lock(mutex_);
+        if (closed_) return false;
+        queue_.clear();
+        queue_.push_back(std::move(data));
+        cond_.notify_one();
+        return true;
+    }
     
     // Блокируется до появления элемента или до shutdown(). Возвращает false после shutdown.
     bool wait_and_pop(T& data) {
